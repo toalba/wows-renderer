@@ -10,6 +10,7 @@ from renderer.layers.trails import TrailLayer
 from renderer.layers.hud import HudLayer
 from renderer.layers.projectiles import ProjectileLayer
 from renderer.layers.capture_points import CapturePointLayer
+from renderer.layers.health_bars import HealthBarLayer
 from wows_replay_parser import parse_replay
 
 REPLAY = Path("20260322_172639_PHSC710-Prins-Van-Oranje_56_AngelWings.wowsreplay")
@@ -40,6 +41,7 @@ try:
     renderer.add_layer(TrailLayer())
     renderer.add_layer(ProjectileLayer())
     renderer.add_layer(ShipLayer())
+    renderer.add_layer(HealthBarLayer())
     renderer.add_layer(HudLayer())
 
     frame_count = 0

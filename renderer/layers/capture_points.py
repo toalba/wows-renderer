@@ -76,8 +76,9 @@ class CapturePointLayer(Layer):
             radius = self._cap_radii.get(eid, 20.0)
 
             # Determine color based on controlling team and capture progress
+            # Trap 5: map raw team ID to display team for correct colors
             progress = cap.capture_points / self.MAX_CAPTURE_POINTS
-            control_team = cap.control_team_id
+            control_team = self.ctx.raw_to_display_team(cap.control_team_id)
 
             if control_team in team_colors:
                 r, g, b, _ = team_colors[control_team]

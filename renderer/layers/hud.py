@@ -17,22 +17,35 @@ class HudLayer(Layer):
         panel_w = config.panel_width
         mm_size = config.minimap_size
 
-        scores = state.battle.team_scores
+        # Remap raw team scores to display teams (Trap 5)
+        raw_scores = state.battle.team_scores
+        display_scores: dict[int, int] = {}
+        for raw_tid, score in raw_scores.items():
+            display_tid = self.ctx.raw_to_display_team(raw_tid)
+            display_scores[display_tid] = score
+
+        # Timer handling (Trap 10: BattleStage is inverted)
+        # raw 1 = pre-battle countdown, raw 0 = battle active
+        battle_stage = state.battle.battle_stage
         time_left = state.battle.time_left
 
-        # Count alive ships per team (count all players, not just visible)
+        # Count alive ships per display team
         alive = {0: 0, 1: 0}
         player_lookup = self.ctx.player_lookup
         for entity_id, ship in state.ships.items():
             if ship.is_alive:
                 player = player_lookup.get(entity_id)
-                team = player.team_id if player else 0
+                if player:
+                    # player.team_id is already display team (from roster)
+                    team = player.team_id
+                else:
+                    team = 0
                 if team in alive:
                     alive[team] += 1
 
-        self._draw_score_bar(cr, panel_w, mm_size, scores, config.team_colors)
+        self._draw_score_bar(cr, panel_w, mm_size, display_scores, config.team_colors)
         self._draw_ship_counts(cr, panel_w, mm_size, alive, config.team_colors)
-        self._draw_timer(cr, panel_w, mm_size, time_left)
+        self._draw_timer(cr, panel_w, mm_size, time_left, battle_stage)
 
     def _draw_score_bar(self, cr, panel_w, mm_size, scores, team_colors):
         h = self.SCORE_BAR_HEIGHT
@@ -40,9 +53,8 @@ class HudLayer(Layer):
 
         score_0 = scores.get(0, 0)
         score_1 = scores.get(1, 0)
-        total = max(score_0 + score_1, 1)
 
-        # Team 0 bar (left portion)
+        # Team 0 bar (ally, left portion)
         r0, g0, b0, _ = team_colors.get(0, (0.33, 0.85, 0.33, 1.0))
         frac_0 = score_0 / self.MAX_SCORE
         w0 = frac_0 * mm_size
@@ -50,7 +62,7 @@ class HudLayer(Layer):
         cr.rectangle(panel_w, y, w0, h)
         cr.fill()
 
-        # Team 1 bar (right portion, from right edge)
+        # Team 1 bar (enemy, right portion, from right edge)
         r1, g1, b1, _ = team_colors.get(1, (0.90, 0.25, 0.25, 1.0))
         frac_1 = score_1 / self.MAX_SCORE
         w1 = frac_1 * mm_size
@@ -98,10 +110,18 @@ class HudLayer(Layer):
         cr.move_to(panel_w + mm_size - ext.width - 6, h / 2 + ext.height / 2)
         cr.show_text(text_1)
 
-    def _draw_timer(self, cr, panel_w, mm_size, time_left):
-        minutes = int(time_left) // 60
-        seconds = int(time_left) % 60
-        timer_text = f"{minutes:02d}:{seconds:02d}"
+    def _draw_timer(self, cr, panel_w, mm_size, time_left, battle_stage):
+        # Trap 10: BattleStage is inverted
+        # raw 1 = pre-battle countdown → show countdown
+        # raw 0 = battle active → show remaining time
+        if battle_stage == 1:
+            # Pre-battle countdown — show "WAITING" or countdown
+            timer_text = f"--:-- ({time_left})"
+        else:
+            # Active battle — show time_left as MM:SS
+            minutes = int(time_left) // 60
+            seconds = int(time_left) % 60
+            timer_text = f"{minutes:02d}:{seconds:02d}"
 
         cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         cr.set_font_size(self.TIMER_FONT_SIZE)

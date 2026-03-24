@@ -19,10 +19,13 @@ class RenderContext:
     map_size: float  # space_size from map_sizes.json
     player_lookup: dict[int, PlayerInfo]  # entity_id -> PlayerInfo
     first_seen: dict[int, float] = None  # entity_id -> first position timestamp
+    _self_team_raw: int | None = None  # raw team_id of the recording player
 
     def __post_init__(self) -> None:
         if self.first_seen is None:
             self.first_seen = self._build_first_seen()
+        if self._self_team_raw is None:
+            self._self_team_raw = self._detect_self_team_raw()
 
     def _build_first_seen(self) -> dict[int, float]:
         """Build lookup of first real position update per entity.
@@ -57,6 +60,50 @@ class RenderContext:
         if first_t is None:
             return True  # unknown entity, show it
         return timestamp >= first_t
+
+    def _detect_self_team_raw(self) -> int:
+        """Detect the raw team_id of the recording player.
+
+        Looks at the BattleLogic teams data and the self player's
+        entity to determine which raw team (from game data) corresponds
+        to the self/ally side (display team 0).
+        """
+        # Find self player
+        self_player = None
+        for p in self.player_lookup.values():
+            if p.relation == 0:
+                self_player = p
+                break
+
+        if self_player is None:
+            return 0
+
+        # Check meta vehicles for raw teamId
+        meta = getattr(self.replay, "meta", {})
+        for vehicle in meta.get("vehicles", []):
+            if not isinstance(vehicle, dict):
+                continue
+            if vehicle.get("relation") == 0:
+                raw_tid = vehicle.get("teamId")
+                if raw_tid is not None:
+                    return int(raw_tid)
+
+        # Fallback: look at early battle state team_scores keys
+        # and assume the self team is the first one
+        return 0
+
+    def raw_to_display_team(self, raw_team_id: int) -> int:
+        """Map a raw team_id from game data to display team (0=ally, 1=enemy).
+
+        Handles the perspective swap (Trap 5): if the recording player's
+        raw team is 1, all raw team IDs need to be swapped.
+        """
+        if self._self_team_raw == 0:
+            return raw_team_id  # No swap needed
+        # Self raw team is 1: swap 0↔1
+        if raw_team_id == self._self_team_raw:
+            return 0  # Self team → display 0 (ally/green)
+        return 1  # Other team → display 1 (enemy/red)
 
     def world_to_pixel(self, world_x: float, world_z: float) -> tuple[float, float]:
         """Convert world coordinates to pixel coordinates on the full canvas.
