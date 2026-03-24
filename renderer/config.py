@@ -1,0 +1,39 @@
+from __future__ import annotations
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+@dataclass
+class RenderConfig:
+    """Configuration for the minimap renderer."""
+
+    # Layout
+    minimap_size: int = 760
+    panel_width: int = 220
+
+    # Video
+    fps: int = 20
+    speed: float = 10.0
+    start_time: float = 0.0
+    end_time: float | None = None
+    codec: str = "libx264"
+    crf: int = 23
+
+    # Paths
+    gamedata_path: Path = Path(".")
+
+    # Rendering
+    trail_length: float = 30.0
+    team_colors: dict[int, tuple[float, float, float, float]] = field(default_factory=lambda: {
+        0: (0.33, 0.85, 0.33, 1.0),  # Green (ally)
+        1: (0.90, 0.25, 0.25, 1.0),  # Red (enemy)
+    })
+    self_color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)  # White (own ship)
+
+    @property
+    def total_width(self) -> int:
+        return self.panel_width + self.minimap_size + self.panel_width
+
+    @property
+    def total_height(self) -> int:
+        return self.minimap_size

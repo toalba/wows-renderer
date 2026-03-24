@@ -1,0 +1,362 @@
+# wows-minimap-renderer
+
+Minimap replay renderer + Discord bot for World of Warships. Parses `.wowsreplay` files and produces mp4 videos showing ship movements, shells, torpedoes, capture points, health bars, and team scores. Built for the Wargaming community bounty (KOTS referee tooling).
+
+**Deadline: April 20, 2026**
+
+## Architecture
+
+```
+wows-minimap-renderer/
+├── renderer/                  # Core rendering engine
+│   ├── core.py                # MinimapRenderer — frame loop, layer compositing
+│   ├── game_state.py          # GameStateAdapter — bridges parser state_at() to render state
+│   ├── config.py              # RenderConfig — resolution, fps, speed, team colors
+│   ├── layers/                # Layer-based rendering (composited per frame, bottom to top)
+│   │   ├── base.py            # Layer ABC
+│   │   ├── map_bg.py          # Minimap background image
+│   │   ├── capture_points.py  # Cap circles + progress + team color
+│   │   ├── trails.py          # Ship movement trails (fading lines)
+│   │   ├── ships.py           # Ship icons (triangle, team-colored, dead=X)
+│   │   ├── projectiles.py     # Shell traces + torpedo dots
+│   │   ├── hud.py             # Score bar, timer, ship counts
+│   │   ├── health_bars.py     # Per-ship HP bars (+ repair party recoverable)
+│   │   ├── team_roster.py     # Ship names + class per team (side panels)
+│   │   └── ribbons.py         # Ribbon popups near ships (P2)
+│   ├── video.py               # Frame → mp4 encoding (imageio/ffmpeg)
+│   └── assets.py              # Asset loading (minimaps, icons, fonts)
+├── bot/                       # Discord bot
+│   ├── main.py                # Bot entry point, slash commands
+│   ├── commands.py            # /render, /analyze commands
+│   ├── worker.py              # Background render queue (async)
+│   └── config.py              # Bot config (token, channels, limits)
+├── Dockerfile
+├── docker-compose.yml
+├── pyproject.toml
+├── CLAUDE.md
+└── README.md
+```
+
+## Dependencies
+
+```toml
+[project]
+dependencies = [
+    "wows-replay-parser",        # Local/git dependency — the replay parser
+    "pillow>=10.0",              # Frame rendering
+    "numpy>=1.26",               # Frame buffer ops
+    "imageio[ffmpeg]>=2.34",     # Video encoding
+    "discord.py>=2.3",           # Discord bot
+    "click>=8.0",                # CLI
+    "rich>=13.0",                # CLI output
+]
+```
+
+The replay parser (`wows-replay-parser`) is a separate package. Install it as a local dependency or from git:
+```toml
+[tool.uv.sources]
+wows-replay-parser = { git = "https://github.com/toalba/wows-replay-parser.git" }
+```
+
+## Data Dependencies
+
+The renderer needs game assets from the wows-gamedata repo:
+```bash
+git clone git@github.com:toalba/wows-gamedata.git
+```
+
+| Asset | Path in gamedata repo | Used for |
+|---|---|---|
+| Minimap images | `data/spaces/<map>/minimap*` | Map background layer |
+| HUD assets | `data/gui/battle_hud/`, `data/gui/ship_bars/` | Health bars, score bar |
+| Consumable icons | `data/gui/consumables/` | Optional HUD enrichment |
+| Fonts | `data/gui/fonts/` | Text rendering (ship names, timer) |
+| Entity defs | `data/scripts_entity/entity_defs/` | Passed through to parser |
+| Constants | `data/scripts_decrypted/extracted_constants.json` | Enum lookups (death reasons, weapon types) |
+| GameParams | `data/content/GameParams.data` | Ship name/class/tier resolution |
+
+The Docker image should include the gamedata assets at build time or mount them as a volume.
+
+### Map Size Lookup
+
+The renderer needs world coordinate bounds per map for the world→pixel coordinate transform. Check `data/spaces/<map>/space.settings` for bounding box data. If not available, maintain a lookup table:
+
+```python
+# Map name → world size (full width in game units)
+MAP_SIZES = {
+    "spaces/00_CO_ocean": 24000,
+    "spaces/01_solomon_islands": 24000,
+    "spaces/04_Archipelago": 30000,
+    "spaces/05_Ring": 36000,
+    # ... extract from space.settings or GameParams
+}
+```
+
+Common sizes: 24000, 30000, 36000, 42000, 48000.
+
+## Rendering Pipeline
+
+```
+ParsedReplay (from wows-replay-parser)
+    │
+    │  replay = parse_replay("battle.wowsreplay", gamedata_path)
+    │
+    ▼
+GameStateAdapter
+    │  Wraps replay.state_at(t) for the renderer
+    │  Resolves ship names/classes via GameParams or JSON header
+    │
+    ▼
+MinimapRenderer
+    │  For each frame timestamp (t += 1/fps):
+    │    1. state = adapter.state_at(t)
+    │    2. For each layer: layer.render(state, t) → RGBA image
+    │    3. Alpha-composite all layers
+    │    4. Yield frame
+    │
+    ▼
+VideoEncoder
+    │  Frames → mp4 via imageio/ffmpeg
+    │
+    ▼
+output.mp4
+```
+
+## Layer System
+
+Each visual element is a separate Layer. Layers are composited in order (first = bottom).
+
+```python
+renderer = MinimapRenderer(config)
+renderer.add_layer(MapBackgroundLayer(maps_dir))      # Bottom
+renderer.add_layer(CapturePointLayer())
+renderer.add_layer(TrailLayer())
+renderer.add_layer(ProjectileLayer())                  # Shells + torpedoes
+renderer.add_layer(ShipLayer())
+renderer.add_layer(HealthBarLayer())
+renderer.add_layer(TeamRosterLayer())
+renderer.add_layer(HudLayer())                         # Top: scores, timer
+# P2:
+renderer.add_layer(RibbonLayer())
+```
+
+Adding a new visual element = adding a new Layer class. No changes to existing code.
+
+### Layer Interface
+
+```python
+class Layer(ABC):
+    def initialize(self, config: RenderConfig, replay: ParsedReplay) -> None:
+        """Called once before rendering. Preload assets, cache data."""
+        ...
+
+    def render(self, state: GameState, timestamp: float) -> Image.Image | None:
+        """Return RGBA image for this frame, or None to skip."""
+        ...
+```
+
+## WG Bounty Requirements Mapping
+
+### Core (required)
+
+| Requirement | Layer/Component | Data Source |
+|---|---|---|
+| Parse replay → video | `core.py` + `video.py` | `parse_replay()` API |
+| Both teams + ship names + HP bars | `team_roster.py` + `health_bars.py` | `replay.players` + `state_at(t).ships` |
+| Shells and torpedoes | `projectiles.py` | `ShotCreatedEvent` + `TorpedoCreatedEvent` + `ShotDestroyedEvent` |
+| Discord bot + user interaction | `bot/` | Slash commands, file upload, mp4 response |
+| Capture points + status + progress | `capture_points.py` | `state_at(t).capture_points` + InteractiveZone properties |
+| Total team points | `hud.py` | `state_at(t).battle.scores` |
+| Maintained for 1 year | Automated gamedata pipeline | `wows-gamedata` repo auto-updates per patch |
+| Apache 2.0, WG copyright | `LICENSE` | Trivial |
+
+### Nice-to-have (P2)
+
+| Feature | Layer/Component | Data Source |
+|---|---|---|
+| Ribbons | `ribbons.py` layer + parser `derive_ribbons()` | Hit events → ribbon derivation |
+| Repair Party recoverable HP | `health_bars.py` (lighter segment) | `regenerationHealth` property |
+| Dual perspective combined | `merge.py` in parser + renderer flag | Two replay files, matched by `arenaUniqueId` |
+
+## Discord Bot
+
+### Commands
+
+```
+/render <replay_file>
+    Optional: speed (default: 10x), start, end, perspective
+    → Renders and uploads mp4
+
+/render <replay_file_1> <replay_file_2>
+    → Dual perspective merge (P2)
+
+/analyze <replay_file>
+    → Text summary: damage breakdown, kill feed, cap timeline (future)
+```
+
+### Flow
+
+```
+User uploads .wowsreplay
+    → Bot receives file via slash command
+    → Queues render job (worker.py)
+    → Worker: parse_replay() → MinimapRenderer → VideoEncoder → mp4
+    → Bot uploads mp4 as reply
+    → Cleanup temp files
+```
+
+### Constraints
+
+- Discord file limit: 8MB (no Nitro), 25MB (Nitro), 100MB (boosted server)
+- For KOTS use, the bot will run on WG's VPS — expect boosted limits
+- Target: 60s timelapse at 720p should be well under 25MB with h264
+- If too large: reduce resolution, increase compression (CRF), or provide download link
+
+### Bot Configuration
+
+```env
+DISCORD_TOKEN=your_bot_token
+GAMEDATA_PATH=./wows-gamedata/data
+RENDER_TEMP_DIR=/tmp/renders
+MAX_CONCURRENT_RENDERS=2
+DEFAULT_SPEED=10
+DEFAULT_RESOLUTION=760
+DEFAULT_FPS=20
+```
+
+## Video Output
+
+### Default: Timelapse
+
+A 20-minute match at 10x speed = 2 minutes of video at 20fps = 2400 frames. At 760x760 this is fast to render and well within Discord limits.
+
+### Configurable Parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `speed` | 10x | Playback speed multiplier |
+| `fps` | 20 | Output video frames per second |
+| `size` | 760 | Output resolution (square, pixels) |
+| `start` | 0 | Start time in seconds (or MM:SS) |
+| `end` | match end | End time |
+| `codec` | libx264 | FFmpeg codec |
+| `crf` | 23 | Quality (lower = better, 18-28 typical) |
+
+### Coordinate Mapping
+
+```python
+def world_to_pixel(world_x: float, world_z: float, map_size: float, render_size: int) -> tuple[int, int]:
+    """
+    World: origin at center, X=east, Z=north, range ±(map_size/2)
+    Pixel: origin at top-left, X=right, Y=down, range 0..render_size
+    """
+    half = map_size / 2.0
+    px = int((world_x + half) / map_size * render_size)
+    py = int((half - world_z) / map_size * render_size)  # Z flipped
+    return (
+        max(0, min(render_size - 1, px)),
+        max(0, min(render_size - 1, py)),
+    )
+```
+
+## Docker
+
+### Dockerfile
+
+```dockerfile
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y ffmpeg git && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install parser dependency
+COPY wows-replay-parser/ ./wows-replay-parser/
+RUN pip install ./wows-replay-parser/
+
+# Install renderer + bot
+COPY . .
+RUN pip install .
+
+# Clone or mount gamedata
+# Option A: build-time (larger image, self-contained)
+# RUN git clone --depth 1 https://github.com/toalba/wows-gamedata.git
+# Option B: runtime mount (smaller image, needs volume)
+VOLUME /data/gamedata
+
+CMD ["python", "-m", "bot.main"]
+```
+
+### docker-compose.yml
+
+```yaml
+services:
+  bot:
+    build: .
+    env_file: .env
+    volumes:
+      - ./wows-gamedata:/data/gamedata:ro
+      - /tmp/renders:/tmp/renders
+    restart: unless-stopped
+```
+
+## Development
+
+```bash
+# Setup
+uv venv && source .venv/bin/activate
+uv pip install -e ".[dev]"
+uv pip install -e ./wows-replay-parser/
+
+# Run renderer CLI
+python -m renderer.cli render replay.wowsreplay -o output.mp4 --gamedata ./wows-gamedata/data
+
+# Run bot locally
+DISCORD_TOKEN=xxx python -m bot.main
+
+# Tests
+pytest
+
+# Lint
+ruff check .
+mypy .
+```
+
+## Implementation Priority
+
+### Week 1: Core rendering
+1. Map background layer (load minimap PNG from gamedata)
+2. Ship layer (positions from `state_at(t)`, team colors, dead markers)
+3. Trail layer (movement history)
+4. HUD layer (timer, team scores)
+5. Video encoder (frames → mp4)
+6. CLI: `render replay.wowsreplay -o output.mp4`
+7. **Validate visually: do ships move correctly?**
+
+### Week 2: Full requirements
+8. Projectile layer (shells + torpedoes from shot events)
+9. Capture point layer (circles, progress, team ownership)
+10. Health bar layer (per-ship HP from entity properties)
+11. Team roster layer (ship names + classes, side panels)
+12. Coordinate mapping validation (are things where they should be?)
+
+### Week 3: Discord bot + polish
+13. Bot skeleton (discord.py, slash commands, file handling)
+14. Render worker (async queue, temp file management)
+15. Speed control (timelapse, time range selection)
+16. Error handling (corrupt replays, unsupported versions)
+17. Visual polish (colors, fonts, anti-aliasing)
+
+### Week 4: Nice-to-haves + submission
+18. Ribbon layer (P2)
+19. Repair Party HP visualization (P2)
+20. Dual perspective merge (P2)
+21. README with screenshots, usage guide
+22. License: Apache 2.0, WG copyright notice
+23. Docker build + deployment docs
+24. **Submit by April 20**
+
+## License
+
+Apache 2.0 — Copyright Wargaming.net
+Developed on Wargaming's request for the community.
