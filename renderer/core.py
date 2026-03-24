@@ -4,6 +4,7 @@ from typing import Callable, TYPE_CHECKING
 
 import cairo
 
+from renderer.assets import load_ship_icons, load_ships_db
 from renderer.config import RenderConfig
 from renderer.layers.base import Layer, RenderContext
 from renderer.game_state import GameStateAdapter
@@ -101,11 +102,19 @@ class MinimapRenderer:
             gamedata_path=config.gamedata_path,
         )
 
+        # Load ship database and icons
+        from pathlib import Path as _Path
+        gp = _Path(config.gamedata_path)
+        ship_db = load_ships_db(gp)
+        ship_icons = load_ship_icons(gp)
+
         render_ctx = RenderContext(
             config=config,
             replay=replay,
             map_size=adapter.map_size,
             player_lookup=adapter.player_lookup,
+            ship_db=ship_db,
+            ship_icons=ship_icons,
         )
 
         # Initialize all layers
@@ -131,8 +140,8 @@ class MinimapRenderer:
             frame_idx = 0
 
             while t <= end:
-                # 1. Clear surface (black)
-                cr.set_source_rgb(0, 0, 0)
+                # 1. Clear surface (dark navy blue)
+                cr.set_source_rgb(0.05, 0.08, 0.15)
                 cr.paint()
 
                 # 2. Get game state at this timestamp

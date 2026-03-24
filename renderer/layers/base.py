@@ -18,6 +18,8 @@ class RenderContext:
     replay: ParsedReplay
     map_size: float  # space_size from map_sizes.json
     player_lookup: dict[int, PlayerInfo]  # entity_id -> PlayerInfo
+    ship_db: dict[int, dict] = None  # ship_id -> {name, species, nation, level}
+    ship_icons: dict[str, dict] = None  # species -> {ally/enemy/white: cairo.ImageSurface}
     first_seen: dict[int, float] = None  # entity_id -> first position timestamp
     _self_team_raw: int | None = None  # raw team_id of the recording player
 

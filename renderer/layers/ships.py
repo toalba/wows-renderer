@@ -7,90 +7,169 @@ import cairo
 from renderer.layers.base import Layer, RenderContext
 
 
-class ShipLayer(Layer):
-    """Draws ship icons on the minimap.
+# Species name from ships.json → icon key
+_SPECIES_TO_ICON: dict[str, str] = {
+    "Destroyer": "destroyer",
+    "Cruiser": "cruiser",
+    "Battleship": "battleship",
+    "AirCarrier": "aircarrier",
+    "Submarine": "submarine",
+    "Auxiliary": "auxiliary",
+}
 
-    Alive ships: team-colored triangles pointing in yaw direction.
-    Dead ships: faded X marks at last known position.
-    Undetected enemies: reduced opacity, no name/HP overlay.
+
+class ShipLayer(Layer):
+    """Draws ship class icons on the minimap with player names.
+
+    Alive ships: team-colored class icons (from game assets) rotated by yaw.
+    Dead ships: sunk variant icon or faded X mark.
+    Player name shown above each ship.
     """
 
-    SHIP_SIZE = 10.0  # Triangle size in pixels
-    DEAD_SIZE = 6.0   # X mark half-size
+    ICON_SCALE = 0.85  # Scale factor for 28x28 icons
+    DEAD_SIZE = 6.0    # X mark half-size (fallback)
     DETECTED_ALPHA = 1.0
     UNDETECTED_ALPHA = 0.4
+    NAME_OFFSET_Y = -14  # Pixels above ship center for name
+    NAME_FONT_SIZE = 9.0
+
+    def initialize(self, ctx: RenderContext) -> None:
+        super().initialize(ctx)
+        # Build entity_id → species icon key lookup
+        self._entity_species: dict[int, str] = {}
+        ship_db = ctx.ship_db or {}
+        for entity_id, player in ctx.player_lookup.items():
+            if player.ship_id and player.ship_id in ship_db:
+                species = ship_db[player.ship_id].get("species", "")
+                icon_key = _SPECIES_TO_ICON.get(species)
+                if icon_key:
+                    self._entity_species[entity_id] = icon_key
 
     def render(self, cr: cairo.Context, state: object, timestamp: float) -> None:
         config = self.ctx.config
+        icons = self.ctx.ship_icons or {}
 
         for entity_id, ship in state.ships.items():
             if not self.ctx.is_visible(entity_id, timestamp):
                 continue
-            # Convert world position to pixel
             wx, _, wz = ship.position
             px, py = self.ctx.world_to_pixel(wx, wz)
 
-            # Determine player info and relation
             player = self.ctx.player_lookup.get(entity_id)
             relation = player.relation if player else 2
 
-            # Get color based on relation (Trap 11)
+            # Team color for fallback / name coloring
             if relation == 0:
-                # Self — white
                 team_color = config.self_color
+                icon_variant = "white"
             elif relation == 1:
-                # Ally — green (display team 0)
                 team_color = config.team_colors.get(0, (0.33, 0.85, 0.33, 1.0))
+                icon_variant = "ally"
             else:
-                # Enemy — red (display team 1)
                 team_color = config.team_colors.get(1, (0.90, 0.25, 0.25, 1.0))
+                icon_variant = "enemy"
 
-            # Detected vs undetected (Trap 6)
-            # Allies/self are always "detected" from our perspective.
-            # Enemies: use is_detected from MinimapVisionInfo (authoritative),
-            # fall back to visibility_flags > 0.
+            # Detection check
             is_detected = True
             if relation == 2 and ship.is_alive:
                 if hasattr(ship, "is_detected"):
                     is_detected = ship.is_detected
                 else:
                     is_detected = ship.visibility_flags > 0
-
             alpha_mult = self.DETECTED_ALPHA if is_detected else self.UNDETECTED_ALPHA
 
+            # Get icon surface
+            species_key = self._entity_species.get(entity_id)
+            icon_set = icons.get(species_key) if species_key else None
+
             if ship.is_alive:
-                self._draw_triangle(cr, px, py, ship.yaw, team_color, alpha_mult)
+                if icon_set:
+                    icon_surface = icon_set.get(icon_variant)
+                    if icon_surface:
+                        self._draw_icon(cr, px, py, ship.yaw, icon_surface, alpha_mult)
+                    else:
+                        self._draw_triangle(cr, px, py, ship.yaw, team_color, alpha_mult)
+                else:
+                    self._draw_triangle(cr, px, py, ship.yaw, team_color, alpha_mult)
+
+                # Player name
+                if player and is_detected:
+                    self._draw_name(cr, px, py, player.name, team_color, alpha_mult)
             else:
-                self._draw_dead_marker(cr, px, py, team_color)
+                # Dead ship
+                if icon_set and "sunk" in icon_set:
+                    self._draw_icon(cr, px, py, 0.0, icon_set["sunk"], 0.5)
+                else:
+                    self._draw_dead_marker(cr, px, py, team_color)
+
+    def _draw_icon(
+        self, cr: cairo.Context, px: float, py: float, yaw: float,
+        surface: cairo.ImageSurface, alpha: float = 1.0,
+    ) -> None:
+        """Draw a ship class icon centered at (px, py), rotated by yaw."""
+        w = surface.get_width()
+        h = surface.get_height()
+        scale = self.ICON_SCALE
+
+        cr.save()
+        cr.translate(px, py)
+        # Game yaw: 0=north, positive=CW. Cairo: positive=CW (Y-down).
+        # Icon default orientation points up (north).
+        cr.rotate(yaw)
+        cr.scale(scale, scale)
+        cr.set_source_surface(surface, -w / 2, -h / 2)
+        cr.paint_with_alpha(alpha)
+        cr.restore()
+
+    def _draw_name(
+        self, cr: cairo.Context, px: float, py: float,
+        name: str, color: tuple[float, float, float, float],
+        alpha_mult: float = 1.0,
+    ) -> None:
+        """Draw player name above the ship."""
+        if not name:
+            return
+        cr.save()
+        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(self.NAME_FONT_SIZE)
+
+        extents = cr.text_extents(name)
+        tx = px - extents.width / 2
+        ty = py + self.NAME_OFFSET_Y
+
+        # Shadow for readability
+        cr.set_source_rgba(0, 0, 0, 0.7 * alpha_mult)
+        cr.move_to(tx + 1, ty + 1)
+        cr.show_text(name)
+
+        # Foreground
+        r, g, b, a = color
+        cr.set_source_rgba(r, g, b, a * alpha_mult)
+        cr.move_to(tx, ty)
+        cr.show_text(name)
+
+        cr.restore()
 
     def _draw_triangle(
         self, cr: cairo.Context, px: float, py: float, yaw: float,
         color: tuple[float, float, float, float], alpha_mult: float = 1.0,
     ) -> None:
-        """Draw a team-colored triangle pointing in yaw direction."""
-        size = self.SHIP_SIZE
+        """Fallback: team-colored triangle pointing in yaw direction."""
+        size = 10.0
         r, g, b, a = color
 
         cr.save()
         cr.translate(px, py)
-        # Trap 4: Yaw convention fix.
-        # Game yaw: 0=north, positive=CW (east). From atan2(dx, dz).
-        # Cairo: positive rotation is CW (Y-down).
-        # Triangle tip starts at (0, -size) = north.
-        # To rotate to yaw direction: rotate CW by yaw.
         cr.rotate(yaw)
 
-        # Triangle: tip at top (forward), base at bottom
-        cr.move_to(0, -size)                    # Tip (forward)
-        cr.line_to(-size * 0.5, size * 0.4)     # Bottom-left
-        cr.line_to(size * 0.5, size * 0.4)      # Bottom-right
+        cr.move_to(0, -size)
+        cr.line_to(-size * 0.5, size * 0.4)
+        cr.line_to(size * 0.5, size * 0.4)
         cr.close_path()
 
-        # Fill
         cr.set_source_rgba(r, g, b, a * alpha_mult)
         cr.fill_preserve()
 
-        # Outline for visibility
         cr.set_source_rgba(0, 0, 0, 0.6 * alpha_mult)
         cr.set_line_width(1.0)
         cr.stroke()
