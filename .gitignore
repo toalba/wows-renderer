@@ -39,3 +39,7 @@ Thumbs.db
 # Temp
 /tmp/
 *.tmp
+
+# GameParams research artifacts (regenerate via scripts/decode_gameparams.py)
+GameParams-*.json
+split/
