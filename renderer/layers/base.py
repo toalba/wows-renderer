@@ -80,7 +80,11 @@ class RenderContext:
         if self_player is None:
             return 0
 
-        # Check meta vehicles for raw teamId
+        # Use the roster player's team_id (most reliable source)
+        if hasattr(self_player, "team_id") and self_player.team_id is not None:
+            return int(self_player.team_id)
+
+        # Fallback: check meta vehicles for raw teamId
         meta = getattr(self.replay, "meta", {})
         for vehicle in meta.get("vehicles", []):
             if not isinstance(vehicle, dict):
@@ -90,8 +94,6 @@ class RenderContext:
                 if raw_tid is not None:
                     return int(raw_tid)
 
-        # Fallback: look at early battle state team_scores keys
-        # and assume the self team is the first one
         return 0
 
     def raw_to_display_team(self, raw_team_id: int) -> int:
@@ -146,3 +148,41 @@ class Layer(ABC):
             timestamp: Current game time in seconds.
         """
         ...
+
+    @staticmethod
+    def draw_text_halo(
+        cr: cairo.Context,
+        x: float,
+        y: float,
+        text: str,
+        r: float,
+        g: float,
+        b: float,
+        alpha: float = 1.0,
+        font_size: float = 10.0,
+        bold: bool = False,
+        outline_width: float = 3.0,
+    ) -> None:
+        """Draw text with a dark stroke halo for readability.
+
+        The halo guarantees text is readable against any background.
+        """
+        cr.select_font_face(
+            "sans-serif",
+            cairo.FONT_SLANT_NORMAL,
+            cairo.FONT_WEIGHT_BOLD if bold else cairo.FONT_WEIGHT_NORMAL,
+        )
+        cr.set_font_size(font_size)
+
+        # 1. Dark stroke outline
+        cr.move_to(x, y)
+        cr.text_path(text)
+        cr.set_source_rgba(0, 0, 0, 0.9 * alpha)
+        cr.set_line_width(outline_width)
+        cr.set_line_join(cairo.LINE_JOIN_ROUND)
+        cr.stroke()
+
+        # 2. Fill on top
+        cr.set_source_rgba(r, g, b, alpha)
+        cr.move_to(x, y)
+        cr.show_text(text)

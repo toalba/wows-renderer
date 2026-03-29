@@ -32,6 +32,8 @@ class ShipLayer(Layer):
     UNDETECTED_ALPHA = 0.4
     NAME_OFFSET_Y = -14  # Pixels above ship center for name
     NAME_FONT_SIZE = 9.0
+    # Off-white for primary labels (easier on the eyes than pure white)
+    LABEL_COLOR = (0.91, 0.89, 0.85)  # #E8E4D9
 
     def initialize(self, ctx: RenderContext) -> None:
         super().initialize(ctx)
@@ -82,15 +84,23 @@ class ShipLayer(Layer):
             species_key = self._entity_species.get(entity_id)
             icon_set = icons.get(species_key) if species_key else None
 
+            # Position packets carry yaw for all visible ships.
+            # Enemy icons from game assets point the same direction as ally
+            # icons, but the game renders enemies facing the opposite way
+            # on the minimap — add π for enemy ships.
+            heading = ship.yaw
+            if relation == 2:
+                heading += math.pi
+
             if ship.is_alive:
                 if icon_set:
                     icon_surface = icon_set.get(icon_variant)
                     if icon_surface:
-                        self._draw_icon(cr, px, py, ship.yaw, icon_surface, alpha_mult)
+                        self._draw_icon(cr, px, py, heading, icon_surface, alpha_mult)
                     else:
-                        self._draw_triangle(cr, px, py, ship.yaw, team_color, alpha_mult)
+                        self._draw_triangle(cr, px, py, heading, team_color, alpha_mult)
                 else:
-                    self._draw_triangle(cr, px, py, ship.yaw, team_color, alpha_mult)
+                    self._draw_triangle(cr, px, py, heading, team_color, alpha_mult)
 
                 # Player name
                 if player and is_detected:
@@ -113,9 +123,10 @@ class ShipLayer(Layer):
 
         cr.save()
         cr.translate(px, py)
-        # Game yaw: 0=north, positive=CW. Cairo: positive=CW (Y-down).
-        # Icon default orientation points up (north).
-        cr.rotate(yaw)
+        # Ship heading: 0=north, positive=CW (compass convention).
+        # Cairo: positive rotation = CW. Icon default = pointing RIGHT (east).
+        # Offset by -π/2 to align icon "east" with heading "north".
+        cr.rotate(yaw - math.pi / 2)
         cr.scale(scale, scale)
         cr.set_source_surface(surface, -w / 2, -h / 2)
         cr.paint_with_alpha(alpha)
@@ -126,7 +137,7 @@ class ShipLayer(Layer):
         name: str, color: tuple[float, float, float, float],
         alpha_mult: float = 1.0,
     ) -> None:
-        """Draw player name above the ship."""
+        """Draw player name above the ship with dark halo."""
         if not name:
             return
         cr.save()
@@ -137,17 +148,12 @@ class ShipLayer(Layer):
         tx = px - extents.width / 2
         ty = py + self.NAME_OFFSET_Y
 
-        # Shadow for readability
-        cr.set_source_rgba(0, 0, 0, 0.7 * alpha_mult)
-        cr.move_to(tx + 1, ty + 1)
-        cr.show_text(name)
-
-        # Foreground
         r, g, b, a = color
-        cr.set_source_rgba(r, g, b, a * alpha_mult)
-        cr.move_to(tx, ty)
-        cr.show_text(name)
-
+        self.draw_text_halo(
+            cr, tx, ty, name,
+            r, g, b, alpha=a * alpha_mult,
+            font_size=self.NAME_FONT_SIZE, bold=True, outline_width=2.5,
+        )
         cr.restore()
 
     def _draw_triangle(

@@ -6,7 +6,7 @@ from renderer.layers.base import Layer, RenderContext
 
 
 class HealthBarLayer(Layer):
-    """Draws per-ship HP bars near ship icons.
+    """Draws per-ship HP bars near ship icons with ship name underneath.
 
     Color changes by HP fraction (Trap 12):
       > 66% → green
@@ -21,6 +21,40 @@ class HealthBarLayer(Layer):
     BAR_HEIGHT = 3
     BAR_OFFSET_Y = 12  # Pixels below ship center
     BG_ALPHA = 0.7
+    SHIP_NAME_FONT_SIZE = 8.0
+    SHIP_NAME_OFFSET_Y = 7  # Pixels below HP bar
+    SHIP_NAME_COLOR = (1.0, 1.0, 1.0)  # white
+
+    _entity_ship_names: dict[int, str]
+    _has_repair_party: dict[int, bool]
+
+    def initialize(self, ctx: RenderContext) -> None:
+        super().initialize(ctx)
+        self._entity_ship_names = {}
+        self._has_repair_party = {}
+        ship_db = ctx.ship_db or {}
+
+        # Load consumable data for repair party gating
+        from renderer.assets import load_ship_consumables
+        ship_consumables = load_ship_consumables(ctx.config.gamedata_path)
+
+        for entity_id, player in ctx.player_lookup.items():
+            if not player.ship_id:
+                continue
+
+            # Ship name
+            if player.ship_id in ship_db:
+                name = ship_db[player.ship_id].get("name", "")
+                if name:
+                    parts = name.split("_", 1)
+                    display = parts[1] if len(parts) > 1 else parts[0]
+                    display = display.replace("_", " ")
+                    self._entity_ship_names[entity_id] = display
+
+            # Repair party check
+            cons = ship_consumables.get(player.ship_id)
+            if cons is not None:
+                self._has_repair_party[entity_id] = cons["has_repair_party"]
 
     def render(self, cr: cairo.Context, state: object, timestamp: float) -> None:
         for entity_id, ship in state.ships.items():
@@ -45,11 +79,17 @@ class HealthBarLayer(Layer):
             fraction = ship.health / ship.max_health
             fraction = max(0.0, min(1.0, fraction))
 
-            self._draw_bar(cr, px, py, fraction, ship)
+            has_heal = self._has_repair_party.get(entity_id, False)
+            self._draw_bar(cr, px, py, fraction, ship, has_heal)
+
+            # Ship name below HP bar (neutral color, not team-colored)
+            ship_name = self._entity_ship_names.get(entity_id)
+            if ship_name:
+                self._draw_ship_name(cr, px, py, ship_name)
 
     def _draw_bar(
         self, cr: cairo.Context, px: float, py: float,
-        fraction: float, ship: object,
+        fraction: float, ship: object, has_heal: bool = False,
     ) -> None:
         w = self.BAR_WIDTH
         h = self.BAR_HEIGHT
@@ -61,8 +101,8 @@ class HealthBarLayer(Layer):
         cr.rectangle(x, y, w, h)
         cr.fill()
 
-        # Regeneration health segment (lighter, behind current HP)
-        if ship.max_health > 0:
+        # Regeneration health segment — only show for ships with Repair Party
+        if has_heal and ship.max_health > 0:
             regen_frac = (ship.health + ship.regeneration_health) / ship.max_health
             regen_frac = max(0.0, min(1.0, regen_frac))
             if regen_frac > fraction:
@@ -76,6 +116,27 @@ class HealthBarLayer(Layer):
         cr.set_source_rgba(r, g, b, 0.9)
         cr.rectangle(x, y, w * fraction, h)
         cr.fill()
+
+    def _draw_ship_name(
+        self, cr: cairo.Context, px: float, py: float,
+        name: str,
+    ) -> None:
+        """Draw ship name centered below the HP bar with dark halo."""
+        cr.save()
+        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+        cr.set_font_size(self.SHIP_NAME_FONT_SIZE)
+
+        extents = cr.text_extents(name)
+        tx = px - extents.width / 2
+        ty = py + self.BAR_OFFSET_Y + self.BAR_HEIGHT + self.SHIP_NAME_OFFSET_Y
+
+        r, g, b = self.SHIP_NAME_COLOR
+        self.draw_text_halo(
+            cr, tx, ty, name,
+            r, g, b, alpha=1.0,
+            font_size=self.SHIP_NAME_FONT_SIZE, bold=False, outline_width=1.5,
+        )
+        cr.restore()
 
     @staticmethod
     def _hp_color(fraction: float) -> tuple[float, float, float]:

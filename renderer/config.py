@@ -25,8 +25,8 @@ class RenderConfig:
     # Rendering
     trail_length: float = 30.0
     team_colors: dict[int, tuple[float, float, float, float]] = field(default_factory=lambda: {
-        0: (0.33, 0.85, 0.33, 1.0),  # Green (ally)
-        1: (0.90, 0.25, 0.25, 1.0),  # Red (enemy)
+        0: (0.36, 0.90, 0.51, 1.0),  # #5DE682 (ally) — luminance-distinct for colorblind
+        1: (1.00, 0.42, 0.42, 1.0),  # #FF6B6B (enemy) — colorblind-safe
     })
     self_color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)  # White (own ship)
 
