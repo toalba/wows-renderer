@@ -96,7 +96,7 @@ class TrailLayer(Layer):
         max_alpha = self.MAX_ALPHA
         n_buckets = self.ALPHA_BUCKETS
 
-        cr.set_line_width(self.LINE_WIDTH)
+        cr.set_line_width(self.LINE_WIDTH * self.ctx.scale)
         cr.set_line_cap(cairo.LINE_CAP_ROUND)
         cr.set_line_join(cairo.LINE_JOIN_ROUND)
 

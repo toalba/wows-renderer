@@ -26,12 +26,12 @@ class ShipLayer(Layer):
     Player name shown above each ship.
     """
 
-    ICON_SCALE = 0.85  # Scale factor for 28x28 icons
-    DEAD_SIZE = 6.0    # X mark half-size (fallback)
+    ICON_SCALE = 0.85  # Scale factor for 28x28 icons (at 760px reference)
+    DEAD_SIZE = 6.0    # X mark half-size
     DETECTED_ALPHA = 1.0
     UNDETECTED_ALPHA = 0.4
-    NAME_OFFSET_Y = -14  # Pixels above ship center for name
-    NAME_FONT_SIZE = 9.0
+    NAME_OFFSET_Y = -14  # Pixels above ship center (at 760px)
+    NAME_FONT_SIZE = 9.0  # At 760px reference
     # Off-white for primary labels (easier on the eyes than pure white)
     LABEL_COLOR = (0.91, 0.89, 0.85)  # #E8E4D9
 
@@ -119,7 +119,7 @@ class ShipLayer(Layer):
         """Draw a ship class icon centered at (px, py), rotated by yaw."""
         w = surface.get_width()
         h = surface.get_height()
-        scale = self.ICON_SCALE
+        scale = self.ICON_SCALE * self.ctx.scale
 
         cr.save()
         cr.translate(px, py)
@@ -144,15 +144,19 @@ class ShipLayer(Layer):
         cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         cr.set_font_size(self.NAME_FONT_SIZE)
 
+        s = self.ctx.scale
+        font_size = self.NAME_FONT_SIZE * s
+        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(font_size)
         extents = cr.text_extents(name)
         tx = px - extents.width / 2
-        ty = py + self.NAME_OFFSET_Y
+        ty = py + self.NAME_OFFSET_Y * s
 
         r, g, b, a = color
         self.draw_text_halo(
             cr, tx, ty, name,
             r, g, b, alpha=a * alpha_mult,
-            font_size=self.NAME_FONT_SIZE, bold=True, outline_width=2.5,
+            font_size=font_size, bold=True, outline_width=2.5 * s,
         )
         cr.restore()
 

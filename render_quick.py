@@ -20,9 +20,9 @@ GAMEDATA = Path("../wows-gamedata/data")
 replay = parse_replay(REPLAY, str(GAMEDATA / "scripts_entity" / "entity_defs"))
 print(f"Parsed: {replay.map_name}, {replay.duration:.0f}s, {len(replay.players)} players")
 
-config = RenderConfig(gamedata_path=GAMEDATA, speed=20.0, fps=20)
+config = RenderConfig(gamedata_path=GAMEDATA, speed=20.0, fps=20, minimap_size=1080, panel_width=420)
 renderer = MinimapRenderer(config)
-for L in [MapBackgroundLayer(), CapturePointLayer(), TrailLayer(), ProjectileLayer(),
+for L in [MapBackgroundLayer(), CapturePointLayer(), ProjectileLayer(),
           ShipLayer(), HealthBarLayer(), ConsumableLayer(), HudLayer()]:
     renderer.add_layer(L)
 

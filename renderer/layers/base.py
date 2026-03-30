@@ -23,6 +23,15 @@ class RenderContext:
     first_seen: dict[int, float] = None  # entity_id -> first position timestamp
     _self_team_raw: int | None = None  # raw team_id of the recording player
 
+    # Scale factor relative to 760px reference resolution.
+    # All font sizes, icon sizes, offsets, line widths should multiply by this.
+    _REFERENCE_SIZE: int = 760
+
+    @property
+    def scale(self) -> float:
+        """Scale factor for rendering at resolutions above 760px."""
+        return self.config.minimap_size / self._REFERENCE_SIZE
+
     def __post_init__(self) -> None:
         if self.first_seen is None:
             self.first_seen = self._build_first_seen()

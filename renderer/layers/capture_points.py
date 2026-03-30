@@ -156,8 +156,9 @@ class CapturePointLayer(Layer):
             cr.set_font_size(self.LABEL_FONT_SIZE)
             ext = cr.text_extents(label)
 
+            s = self.ctx.scale
             self.draw_text_halo(
                 cr, px - ext.width / 2, py + ext.height / 2, label,
                 owner_r, owner_g, owner_b, alpha=0.9,
-                font_size=self.LABEL_FONT_SIZE, bold=True, outline_width=3.5,
+                font_size=self.LABEL_FONT_SIZE * s, bold=True, outline_width=3.5 * s,
             )

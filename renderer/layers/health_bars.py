@@ -91,10 +91,11 @@ class HealthBarLayer(Layer):
         self, cr: cairo.Context, px: float, py: float,
         fraction: float, ship: object, has_heal: bool = False,
     ) -> None:
-        w = self.BAR_WIDTH
-        h = self.BAR_HEIGHT
+        s = self.ctx.scale
+        w = self.BAR_WIDTH * s
+        h = self.BAR_HEIGHT * s
         x = px - w / 2
-        y = py + self.BAR_OFFSET_Y
+        y = py + self.BAR_OFFSET_Y * s
 
         # Background
         cr.set_source_rgba(0.2, 0.2, 0.2, self.BG_ALPHA)
@@ -123,18 +124,20 @@ class HealthBarLayer(Layer):
     ) -> None:
         """Draw ship name centered below the HP bar with dark halo."""
         cr.save()
+        s = self.ctx.scale
+        font_size = self.SHIP_NAME_FONT_SIZE * s
         cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-        cr.set_font_size(self.SHIP_NAME_FONT_SIZE)
+        cr.set_font_size(font_size)
 
         extents = cr.text_extents(name)
         tx = px - extents.width / 2
-        ty = py + self.BAR_OFFSET_Y + self.BAR_HEIGHT + self.SHIP_NAME_OFFSET_Y
+        ty = py + (self.BAR_OFFSET_Y + self.BAR_HEIGHT + self.SHIP_NAME_OFFSET_Y) * s
 
         r, g, b = self.SHIP_NAME_COLOR
         self.draw_text_halo(
             cr, tx, ty, name,
             r, g, b, alpha=1.0,
-            font_size=self.SHIP_NAME_FONT_SIZE, bold=False, outline_width=1.5,
+            font_size=font_size, bold=False, outline_width=1.5 * s,
         )
         cr.restore()
 

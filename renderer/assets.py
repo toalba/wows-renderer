@@ -297,7 +297,21 @@ def load_ship_consumables(gamedata_path: Path) -> dict[int, dict[str, list[str]]
         _ship_consumables_cache = {}
         return _ship_consumables_cache
 
-    result: dict[int, dict[str, list[str]]] = {}
+    # Pre-load all Ability files for variant range lookup
+    ability_dir = gamedata_path / "split" / "Ability"
+    ability_data: dict[str, dict] = {}  # ability_name → full JSON
+    if ability_dir.exists():
+        for af in ability_dir.iterdir():
+            if af.suffix == ".json":
+                try:
+                    ad = json.loads(af.read_text())
+                    name = ad.get("name")
+                    if name:
+                        ability_data[name] = ad
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+    result: dict[int, dict] = {}
 
     for ship_file in ship_dir.iterdir():
         if ship_file.suffix != ".json":
@@ -314,11 +328,12 @@ def load_ship_consumables(gamedata_path: Path) -> dict[int, dict[str, list[str]]
         abilities_data = data.get("ShipAbilities", {})
         ability_names: list[str] = []
         slot_categories: list[str] = []
+        # consumableType → range in meters (for radar/hydro circles)
+        ranges: dict[str, float] = {}
 
         for slot_key in sorted(abilities_data.keys()):
             slot_val = abilities_data[slot_key]
             if not isinstance(slot_val, dict):
-                # Could be a list directly
                 abils = slot_val if isinstance(slot_val, list) else []
             else:
                 abils = slot_val.get("abils", [])
@@ -326,21 +341,35 @@ def load_ship_consumables(gamedata_path: Path) -> dict[int, dict[str, list[str]]
             if not abils:
                 continue
 
-            # Each slot has a list of ability options: [["PCY009_CrashCrewPremium", "CV_CA_CL_Gold"], ...]
-            # Take the first option as the default
             for option in abils:
                 if isinstance(option, list) and len(option) >= 1:
                     ability_name = option[0]
+                    variant_name = option[1] if len(option) >= 2 else ""
                     ability_names.append(ability_name)
                     category = _classify_ability(ability_name)
                     if category and category not in slot_categories:
                         slot_categories.append(category)
+
+                    # Look up detection range for radar/hydro/hydrophone
+                    if category in ("hydroacoustic", "surveillance_radar", "submarine_surveillance"):
+                        ab = ability_data.get(ability_name, {})
+                        variant = ab.get(variant_name, {})
+                        logic = variant.get("logic", {})
+                        if isinstance(logic, dict):
+                            dist_ship = logic.get("distShip", 0)
+                            if dist_ship:
+                                # distShip is in 1/30th of meters
+                                ct = _classify_ability_to_consumable_type(ability_name)
+                                if ct:
+                                    ranges[ct] = dist_ship * 30.0
+
                     break  # Only first option per slot
 
         result[int(ship_id)] = {
             "slots": slot_categories,
             "abilities": ability_names,
             "has_repair_party": "repair_party" in slot_categories,
+            "ranges": ranges,
         }
 
     _ship_consumables_cache = result
@@ -394,6 +423,18 @@ def load_consumable_icons(
 
     _consumable_icons_cache = icons
     return icons
+
+
+def _classify_ability_to_consumable_type(ability_name: str) -> str:
+    """Map ability name to consumableType string (matching CONSUMABLE_TYPE_ID_MAP values)."""
+    name_lower = ability_name.lower()
+    if "sonarsearch" in name_lower:
+        return "sonar"
+    if "rlssearch" in name_lower:
+        return "rls"
+    if "hydrophone" in name_lower or "submarinelocator" in name_lower:
+        return "hydrophone"
+    return ""
 
 
 def _classify_ability(ability_name: str) -> str:

@@ -1,6 +1,8 @@
-"""Renders consumable icons near ships — only shown when active."""
+"""Renders consumable icons near ships + detection radius circles."""
 
 from __future__ import annotations
+
+import math
 
 import cairo
 
@@ -8,28 +10,47 @@ from renderer.assets import CONSUMABLE_TYPE_ID_MAP, CONSUMABLE_TYPE_TO_ICONS
 from renderer.layers.base import Layer, RenderContext
 
 
+# Consumable types that show detection radius circles
+_CIRCLE_TYPES = {"sonar", "rls", "hydrophone", "submarineLocator"}
+
+# Circle colors per consumable type: (r, g, b)
+_CIRCLE_COLORS: dict[str, tuple[float, float, float]] = {
+    "sonar": (0.2, 0.8, 0.9),       # teal
+    "rls": (0.9, 0.3, 0.3),         # red
+    "hydrophone": (0.4, 0.5, 0.9),  # blue
+    "submarineLocator": (0.5, 0.3, 0.8),  # purple
+}
+
+
 class ConsumableLayer(Layer):
     """Draws consumable icons below ships when activated.
+
+    Also draws detection radius circles for radar, hydro, and hydrophone
+    using per-ship range data from GameParams.
 
     The cons_id from onConsumableUsed is a global consumableTypeId
     (from server-side ConsumableIDsMap). This maps directly to a
     consumableType string, which maps to an icon file.
-
-    No per-ship pairing needed — the mapping is global.
     """
 
     ICON_SIZE = 16
     ICON_GAP = 2
     OFFSET_Y = 30
     ACTIVE_ALPHA = 1.0
+    CIRCLE_FILL_ALPHA = 0.03
+    CIRCLE_STROKE_ALPHA = 0.25
+    CIRCLE_STROKE_WIDTH = 1.0
 
     # cons_id → cairo.ImageSurface (global, not per-entity)
     _type_icons: dict[int, cairo.ImageSurface]
+    # entity_id → {consumableType: range_meters}
+    _entity_ranges: dict[int, dict[str, float]]
 
     def initialize(self, ctx: RenderContext) -> None:
         super().initialize(ctx)
-        from renderer.assets import load_consumable_icons
+        from renderer.assets import load_consumable_icons, load_ship_consumables
         all_icons = load_consumable_icons(ctx.config.gamedata_path)
+        ship_consumables = load_ship_consumables(ctx.config.gamedata_path)
 
         # Build global cons_id → icon mapping
         self._type_icons = {}
@@ -39,6 +60,15 @@ class ConsumableLayer(Layer):
                 if icon_name in all_icons:
                     self._type_icons[type_id] = all_icons[icon_name]
                     break
+
+        # Build per-entity range data from ship_consumables
+        self._entity_ranges = {}
+        for entity_id, player in ctx.player_lookup.items():
+            if player.ship_id:
+                cons = ship_consumables.get(player.ship_id, {})
+                ranges = cons.get("ranges", {})
+                if ranges:
+                    self._entity_ranges[entity_id] = ranges
 
     def render(self, cr: cairo.Context, state: object, timestamp: float) -> None:
         tracker = getattr(self.ctx.replay, "_tracker", None)
@@ -62,34 +92,87 @@ class ConsumableLayer(Layer):
             # Get active consumables
             activations = getattr(tracker, "_consumable_activations", {}).get(entity_id, [])
             active_icons: list[cairo.ImageSurface] = []
+            active_type_names: list[str] = []
             for activated_at, cons_id, duration in activations:
                 if activated_at <= timestamp < activated_at + duration:
                     icon = self._type_icons.get(cons_id)
                     if icon is not None:
                         active_icons.append(icon)
+                    type_name = CONSUMABLE_TYPE_ID_MAP.get(cons_id, "")
+                    if type_name:
+                        active_type_names.append(type_name)
 
-            if not active_icons:
+            if not active_icons and not active_type_names:
                 continue
 
             wx, _, wz = ship.position
             px, py = self.ctx.world_to_pixel(wx, wz)
 
-            # Draw row
-            n = len(active_icons)
-            row_width = n * self.ICON_SIZE + (n - 1) * self.ICON_GAP
-            start_x = px - row_width / 2
-            icon_y = py + self.OFFSET_Y
+            # Draw detection radius circles for radar/hydro
+            entity_ranges = self._entity_ranges.get(entity_id, {})
+            for type_name in active_type_names:
+                if type_name not in _CIRCLE_TYPES:
+                    continue
+                range_meters = entity_ranges.get(type_name, 0)
+                if range_meters <= 0:
+                    continue
+                self._draw_range_circle(
+                    cr, px, py, range_meters, type_name,
+                )
 
-            for i, icon_surface in enumerate(active_icons):
-                icon_x = start_x + i * (self.ICON_SIZE + self.ICON_GAP)
-                self._draw_icon(cr, icon_x, icon_y, icon_surface)
+            # Draw icon row
+            if active_icons:
+                s = self.ctx.scale
+                icon_size = self.ICON_SIZE * s
+                icon_gap = self.ICON_GAP * s
+                n = len(active_icons)
+                row_width = n * icon_size + (n - 1) * icon_gap
+                start_x = px - row_width / 2
+                icon_y = py + self.OFFSET_Y * s
+
+                for i, icon_surface in enumerate(active_icons):
+                    icon_x = start_x + i * (icon_size + icon_gap)
+                    self._draw_icon(cr, icon_x, icon_y, icon_surface)
+
+    def _draw_range_circle(
+        self, cr: cairo.Context, px: float, py: float,
+        range_meters: float, type_name: str,
+    ) -> None:
+        """Draw a detection radius circle centered on the ship."""
+        # range_meters is in game meters. Convert to pixels:
+        # Trap 3: meters → space_units = ÷30, then space_units → pixels
+        map_size = self.ctx.map_size  # in space_units
+        mm = self.ctx.config.minimap_size
+        radius_px = range_meters / 30.0 / map_size * mm
+
+        r, g, b = _CIRCLE_COLORS.get(type_name, (0.5, 0.5, 0.5))
+
+        is_radar = type_name == "rls"
+
+        # Fill (radar only)
+        if is_radar:
+            cr.new_sub_path()
+            cr.arc(px, py, radius_px, 0, 2 * math.pi)
+            cr.set_source_rgba(r, g, b, self.CIRCLE_FILL_ALPHA)
+            cr.fill()
+
+        # Stroke
+        cr.new_sub_path()
+        cr.arc(px, py, radius_px, 0, 2 * math.pi)
+        cr.set_source_rgba(r, g, b, self.CIRCLE_STROKE_ALPHA)
+        cr.set_line_width(self.CIRCLE_STROKE_WIDTH)
+        if not is_radar:
+            cr.set_dash([6, 4])
+        cr.stroke()
+        if not is_radar:
+            cr.set_dash([])  # reset
 
     def _draw_icon(
         self, cr: cairo.Context, x: float, y: float, surface: cairo.ImageSurface,
     ) -> None:
         w = surface.get_width()
         h = surface.get_height()
-        scale = self.ICON_SIZE / max(w, h)
+        scale = self.ICON_SIZE * self.ctx.scale / max(w, h)
 
         cr.save()
         cr.translate(x, y)
