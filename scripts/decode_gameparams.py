@@ -88,7 +88,7 @@ def decode_gameparams(path: Path) -> dict:
 
 
 def extract_ships(gp: dict) -> dict[str, dict]:
-    """Extract ships lookup: {shipId: {name, species, nation, level}}."""
+    """Extract ships lookup: {shipId: {name, index, species, nation, level}}."""
     ships = {}
     for name, obj in gp.items():
         if not isinstance(obj, dict):
@@ -101,11 +101,56 @@ def extract_ships(gp: dict) -> dict[str, dict]:
             continue
         ships[str(ship_id)] = {
             "name": name,
+            "index": obj.get("index", ""),
             "species": ti.get("species", ""),
             "nation": ti.get("nation", ""),
             "level": obj.get("level", 0),
         }
     return ships
+
+
+def generate_ship_names(ships: dict[str, dict], mo_path: Path) -> dict[str, str]:
+    """Generate {shipId: display_name} from ships.json + global.mo.
+
+    Looks up IDS_{index} in the gettext catalog for each ship.
+    Falls back to a cleaned version of the internal name.
+    """
+    import gettext
+    import re
+
+    catalog = None
+    if mo_path.exists():
+        class _UTF8(gettext.GNUTranslations):
+            def _parse(self, fp):
+                self._charset = "utf-8"
+                super()._parse(fp)
+
+        try:
+            with open(mo_path, "rb") as f:
+                catalog = _UTF8(f)
+        except Exception as e:
+            print(f"Warning: failed to parse {mo_path}: {e}")
+
+    names: dict[str, str] = {}
+    for ship_id, info in ships.items():
+        index = info.get("index", "")
+        display = None
+
+        # Try .mo lookup
+        if catalog and index:
+            key = f"IDS_{index}"
+            val = catalog.gettext(key)
+            if val != key:
+                display = val
+
+        # Fallback: strip prefix + underscores from internal name
+        if not display:
+            raw = info.get("name", "")
+            display = re.sub(r"^P[A-Z]{3}\d+_", "", raw).replace("_", " ")
+
+        names[ship_id] = display
+
+    return names
 
 
 def extract_projectiles(gp: dict) -> dict[str, dict]:
@@ -192,7 +237,7 @@ def main():
     gp = decode_gameparams(args.input)
     print(f"Loaded {len(gp)} entities")
 
-    # Always extract ships.json and projectiles.json
+    # Always extract ships.json, projectiles.json, and ship_names.json
     ships = extract_ships(gp)
     ships_path = args.output_dir / "ships.json"
     ships_path.write_text(json.dumps(ships, indent=2, sort_keys=True))
@@ -202,6 +247,14 @@ def main():
     proj_path = args.output_dir / "projectiles.json"
     proj_path.write_text(json.dumps(projectiles, separators=(",", ":")))
     print(f"Saved {len(projectiles)} projectiles to {proj_path}")
+
+    # Generate ship display names from global.mo
+    mo_path = args.output_dir / "global.mo"
+    ship_names = generate_ship_names(ships, mo_path)
+    names_path = args.output_dir / "ship_names.json"
+    names_path.write_text(json.dumps(ship_names, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    mo_count = sum(1 for n in ship_names.values() if n)
+    print(f"Saved {mo_count} ship display names to {names_path}")
 
     if args.ships_only:
         return
