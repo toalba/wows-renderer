@@ -218,46 +218,49 @@ class HudLayer(Layer):
         cr.show_text(timer_text)
 
     def _draw_ttw(self, cr, panel_w, mm_size, scores, score_rates, time_left):
-        """Draw Time-to-Win estimates as prominent pills beside the timer."""
+        """Draw Time-to-Win estimates as pills beside the timer.
+
+        Each pill shows a diamond icon + MM:SS. The projected actual winner's
+        pill gets a brighter fill to indicate who would really win considering
+        both cap-tick-to-1000 and timeout scenarios.
+        """
         score_0 = scores.get(0, 0)
         score_1 = scores.get(1, 0)
         rate_0 = score_rates[0]
         rate_1 = score_rates[1]
 
-        # Only show if at least one team is actively scoring
-        if rate_0 < 0.01 and rate_1 < 0.01:
-            return
-
-        # Calculate seconds to reach win score; hide if unreachable before time runs out
         ttw_0 = (self._win_score - score_0) / rate_0 if rate_0 > 0.01 else float("inf")
         ttw_1 = (self._win_score - score_1) / rate_1 if rate_1 > 0.01 else float("inf")
-        if ttw_0 >= time_left:
-            ttw_0 = float("inf")
-        if ttw_1 >= time_left:
-            ttw_1 = float("inf")
-        if ttw_0 == float("inf") and ttw_1 == float("inf"):
-            return
 
-        font_size = self.TIMER_FONT_SIZE  # same size as timer for prominence
+        winner = self._projected_winner(score_0, score_1, rate_0, rate_1, time_left)
+
+        font_size = self.TIMER_FONT_SIZE
         cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         cr.set_font_size(font_size)
 
-        # Baseline aligned with the timer
         timer_y = self.SCORE_BAR_HEIGHT + 20
         cx = panel_w + mm_size / 2
-        pad_x, pad_y = 6, 3
-        gap = 8  # gap between pill and timer
+        pad_x, pad_y = 8, 4
+        gap = 10
+        diamond_size = font_size * 0.45
 
-        def _pill(text, r, g, b, tx, ty):
-            """Draw a colored-border pill with text starting at (tx, ty)."""
+        def _pill(text, r, g, b, anchor_x, ty, is_winner, align_right=False):
+            """Draw a TTW pill: ◆ MM:SS, highlighted if projected winner."""
             cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
             cr.set_font_size(font_size)
             ext = cr.text_extents(text)
-            pill_x = tx - pad_x
-            pill_y = ty - ext.height - pad_y
-            pill_w = ext.width + pad_x * 2
+            diamond_space = diamond_size + 5
+            content_w = diamond_space + ext.width
+            pill_w = content_w + pad_x * 2
             pill_h = ext.height + pad_y * 2
             pill_r = pill_h / 2
+
+            # Position pill
+            if align_right:
+                pill_x = anchor_x - pill_w
+            else:
+                pill_x = anchor_x
+            pill_y = ty - ext.height - pad_y
 
             def _rounded_rect():
                 cr.new_sub_path()
@@ -267,39 +270,65 @@ class HudLayer(Layer):
                 cr.arc(pill_x + pill_r, pill_y + pill_r, pill_r, 3.14159, 4.71239)
                 cr.close_path()
 
-            cr.set_source_rgba(0.05, 0.08, 0.18, 0.85)
+            # Background
+            if is_winner:
+                cr.set_source_rgba(r, g, b, 0.25)
+            else:
+                cr.set_source_rgba(0.05, 0.08, 0.18, 0.85)
             _rounded_rect()
             cr.fill()
-            cr.set_source_rgba(r, g, b, 1.0)
-            cr.set_line_width(2.0)
+
+            # Border
+            cr.set_source_rgba(r, g, b, 1.0 if is_winner else 0.5)
+            cr.set_line_width(2.0 if is_winner else 1.0)
             _rounded_rect()
             cr.stroke()
-            cr.set_source_rgba(r, g, b, 1.0)
-            cr.move_to(tx, ty)
+
+            # Diamond icon (centered vertically in pill)
+            alpha = 1.0
+            dcx = pill_x + pad_x + diamond_size / 2
+            dcy = pill_y + pill_h / 2
+            s = diamond_size
+            cr.save()
+            cr.translate(dcx, dcy)
+            cr.rotate(0.7854)
+            cr.rectangle(-s / 2, -s / 2, s, s)
+            cr.set_source_rgba(r, g, b, alpha)
+            cr.fill()
+            cr.restore()
+
+            # Time text
+            cr.set_source_rgba(r, g, b, alpha)
+            cr.move_to(pill_x + pad_x + diamond_space, ty)
             cr.show_text(text)
 
-        # Estimate timer pill width to compute gap offset
+        # Timer pill width for gap calculation
         cr.set_font_size(self.TIMER_FONT_SIZE)
         timer_ext = cr.text_extents("00:00")
-        timer_half_w = timer_ext.width / 2 + 8 + 4  # timer pad_x + gap
+        timer_half_w = timer_ext.width / 2 + 8 + 4
 
         r0, g0, b0, _ = self.ctx.config.team_colors.get(0, (0.33, 0.85, 0.33, 1.0))
         r1, g1, b1, _ = self.ctx.config.team_colors.get(1, (0.90, 0.25, 0.25, 1.0))
 
-        # Team 0 TTW pill (left of timer, right-aligned toward center)
-        if 0 < ttw_0 < float("inf"):
+        # Team 0 TTW pill (left of timer, right-aligned)
+        if ttw_0 < float("inf"):
             secs = max(0, int(ttw_0))
-            text = f"{secs // 60}:{secs % 60:02d}"
-            cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-            cr.set_font_size(font_size)
-            ext = cr.text_extents(text)
-            _pill(text, r0, g0, b0, cx - timer_half_w - gap - ext.width, timer_y)
+            text_0 = f"{secs // 60}:{secs % 60:02d}"
+        else:
+            text_0 = "--:--"
+        _pill(text_0, r0, g0, b0,
+              cx - timer_half_w - gap, timer_y,
+              winner == 0, align_right=True)
 
-        # Team 1 TTW pill (right of timer, left-aligned from center)
-        if 0 < ttw_1 < float("inf"):
+        # Team 1 TTW pill (right of timer, left-aligned)
+        if ttw_1 < float("inf"):
             secs = max(0, int(ttw_1))
-            text = f"{secs // 60}:{secs % 60:02d}"
-            _pill(text, r1, g1, b1, cx + timer_half_w + gap, timer_y)
+            text_1 = f"{secs // 60}:{secs % 60:02d}"
+        else:
+            text_1 = "--:--"
+        _pill(text_1, r1, g1, b1,
+              cx + timer_half_w + gap, timer_y,
+              winner == 1)
 
     def _projected_winner(self, score_0, score_1, rate_0, rate_1, time_left):
         """Project who wins: 0=ally, 1=enemy, -1=draw/unclear."""
@@ -323,11 +352,14 @@ class HudLayer(Layer):
         return -1
 
     def _draw_kill_swing(self, cr, panel_w, mm_size, scores, score_rates, time_left):
-        """Show '1 KILL DECIDES' when a single kill would flip the projected winner."""
+        """Show '1 KILL DECIDES' when a single kill would flip the projected winner.
+
+        Glows in the color of the team that holds the swing condition
+        (i.e., whose kill would flip the outcome).
+        """
         score_0 = scores.get(0, 0)
         score_1 = scores.get(1, 0)
 
-        # Only in decisive phase (at least one team above 500)
         if score_0 < 500 and score_1 < 500:
             return
 
@@ -335,23 +367,29 @@ class HudLayer(Layer):
         rate_1 = score_rates[1]
         swing = self._kill_swing
 
-        # Current projected winner
         current = self._projected_winner(score_0, score_1, rate_0, rate_1, time_left)
 
         # Check if a kill by either team flips the result
-        # Team 0 gets a kill: +reward for team 0, -penalty for team 1
-        after_ally_kill = self._projected_winner(
+        ally_flips = self._projected_winner(
             score_0 + swing, score_1, rate_0, rate_1, time_left
-        )
-        # Team 1 gets a kill: +reward for team 1, -penalty for team 0
-        after_enemy_kill = self._projected_winner(
+        ) != current
+        enemy_flips = self._projected_winner(
             score_0, score_1 + swing, rate_0, rate_1, time_left
-        )
+        ) != current
 
-        if after_ally_kill == current and after_enemy_kill == current:
-            return  # No flip — not a swing moment
+        if not ally_flips and not enemy_flips:
+            return
 
-        # Draw indicator
+        # Determine glow color: team that benefits from the swing
+        r0, g0, b0, _ = self.ctx.config.team_colors.get(0, (0.33, 0.85, 0.33, 1.0))
+        r1, g1, b1, _ = self.ctx.config.team_colors.get(1, (0.90, 0.25, 0.25, 1.0))
+        if ally_flips and not enemy_flips:
+            r, g, b = r0, g0, b0  # Only ally kill flips — glow ally color
+        elif enemy_flips and not ally_flips:
+            r, g, b = r1, g1, b1  # Only enemy kill flips — glow enemy color
+        else:
+            r, g, b = 1.0, 0.85, 0.0  # Both can flip — neutral gold
+
         font_size = self.COUNT_FONT_SIZE
         text = "1 KILL DECIDES"
         cx = panel_w + mm_size / 2
@@ -361,7 +399,7 @@ class HudLayer(Layer):
         ext = cr.text_extents(text)
         self.draw_text_halo(
             cr, cx - ext.width / 2, y, text,
-            1.0, 0.85, 0.0, alpha=0.9, font_size=font_size, bold=True,
+            r, g, b, alpha=0.9, font_size=font_size, bold=True,
         )
 
     def _draw_match_result(self, cr, panel_w, mm_size, result_winner):

@@ -208,6 +208,24 @@ _CONSUMABLE_PATTERNS: dict[str, str] = {
     "SubmarineLocator": "submarine_surveillance",
 }
 
+# Wire consumableType name → timing category name in ship_consumables.json
+CONSUMABLE_TYPE_TO_CATEGORY: dict[str, str] = {
+    "crashCrew": "damage_control",
+    "regenCrew": "repair_party",
+    "regenerateHealth": "repair_party",
+    "airDefenseDisp": "defensive_aa",
+    "fighter": "catapult_fighter",
+    "scout": "catapult_fighter",
+    "speedBoosters": "engine_boost",
+    "sonar": "hydroacoustic",
+    "rls": "surveillance_radar",
+    "smokeGenerator": "smoke_screen",
+    "torpedoReloader": "torpedo_reload",
+    "artilleryBoosters": "main_battery_reload",
+    "hydrophone": "submarine_surveillance",
+    "submarineLocator": "submarine_surveillance",
+}
+
 # Global consumable type ID → consumableType string.
 # From decompiled server code: ConsumableIDsMap maps consumableType strings
 # to integer IDs. The server replaces string keys with these IDs before
@@ -297,13 +315,11 @@ def load_ship_consumables(gamedata_path: Path) -> dict[int, dict[str, list[str]]
     if _ship_consumables_cache is not None:
         return _ship_consumables_cache
 
-    # Fast path: pre-built JSON (if newer than source data)
+    # Fast path: pre-built JSON
     json_path = gamedata_path / "ship_consumables.json"
     ship_dir = gamedata_path / "split" / "Ship"
-    cache_valid = False
-    if json_path.exists() and ship_dir.exists():
-        cache_valid = json_path.stat().st_mtime >= ship_dir.stat().st_mtime
-    if cache_valid:
+    # Use JSON if it exists and is either the only source or newer than split dir
+    if json_path.exists() and (not ship_dir.exists() or json_path.stat().st_mtime >= ship_dir.stat().st_mtime):
         try:
             data = json.loads(json_path.read_text())
             _ship_consumables_cache = {int(k): v for k, v in data.items()}

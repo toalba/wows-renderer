@@ -113,7 +113,6 @@ class KillfeedLayer(Layer):
         visible = visible[-self.MAX_VISIBLE:]
 
         x_base = config.panel_width + config.minimap_size + 8
-        y_start = config.hud_height + 30
         s = self.ctx.scale
         font_size = self.FONT_SIZE * s
         line_h = self.LINE_HEIGHT * s
@@ -121,7 +120,11 @@ class KillfeedLayer(Layer):
 
         max_x = config.total_width - 4
 
-        # Clip to right panel area (extend left to cover icon overshoot)
+        # Anchor from bottom of minimap area, grow upward
+        y_bottom = config.hud_height + config.minimap_size - 10
+        y_start = y_bottom - len(visible) * line_h
+
+        # Clip to right panel area
         cr.save()
         clip_x = config.panel_width + config.minimap_size
         clip_w = config.panel_width
@@ -151,29 +154,23 @@ class KillfeedLayer(Layer):
             cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
             cr.set_font_size(font_size)
 
-            # Killer name + ship
+            # Killer name + ship (cached text surfaces)
             killer_ship = self._ship_names.get(killer_id, "")
-            killer_label = f"{killer_name} ({killer_ship})" if killer_ship else killer_name
-            self.draw_text_halo(cr, x_base, y, killer_name, kr, kg, kb,
-                                alpha=alpha, font_size=font_size, bold=True)
-            ext_k = cr.text_extents(killer_name)
+            ext_k_w = self.draw_cached_text(cr, x_base, y, killer_name, kr, kg, kb,
+                                            alpha=alpha, font_size=font_size, bold=True)
             if killer_ship:
                 ship_text = f" ({killer_ship}) "
-                self.draw_text_halo(cr, x_base + ext_k.width, y, ship_text, 0.85, 0.85, 0.85,
-                                    alpha=alpha * 0.7, font_size=font_size * 0.85, bold=False)
-                cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-                cr.set_font_size(font_size * 0.85)
-                ext_ks = cr.text_extents(ship_text)
-                icon_x = x_base + ext_k.width + ext_ks.width + 4
+                ext_ks_w = self.draw_cached_text(cr, x_base + ext_k_w, y, ship_text, 0.85, 0.85, 0.85,
+                                                 alpha=alpha * 0.7, font_size=font_size * 0.85, bold=False)
+                icon_x = x_base + ext_k_w + ext_ks_w + 4
             else:
-                icon_x = x_base + ext_k.width + 4
+                icon_x = x_base + ext_k_w + 4
 
             # Death reason icon or text
             label, icon_name = _DEATH_REASON.get(reason, ("", ""))
             icon_surface = self._icons.get(icon_name) if icon_name else None
 
             if icon_surface:
-                # Draw icon centered vertically
                 iw = icon_surface.get_width()
                 ih = icon_surface.get_height()
                 icon_scale = icon_size / max(iw, ih)
@@ -186,24 +183,21 @@ class KillfeedLayer(Layer):
                 after_icon_x = icon_x + icon_size + 4
             elif label:
                 cause_text = f" [{label}] "
-                self.draw_text_halo(cr, icon_x, y, cause_text, 0.8, 0.8, 0.8,
-                                    alpha=alpha * 0.7, font_size=font_size * 0.85, bold=False)
-                ext_c = cr.text_extents(cause_text)
-                after_icon_x = icon_x + ext_c.width
+                ext_c_w = self.draw_cached_text(cr, icon_x, y, cause_text, 0.8, 0.8, 0.8,
+                                                alpha=alpha * 0.7, font_size=font_size * 0.85, bold=False)
+                after_icon_x = icon_x + ext_c_w
             else:
-                self.draw_text_halo(cr, icon_x, y, " \u2715 ", 0.8, 0.8, 0.8,
-                                    alpha=alpha * 0.7, font_size=font_size, bold=False)
-                ext_c = cr.text_extents(" \u2715 ")
-                after_icon_x = icon_x + ext_c.width
+                ext_c_w = self.draw_cached_text(cr, icon_x, y, " \u2715 ", 0.8, 0.8, 0.8,
+                                                alpha=alpha * 0.7, font_size=font_size, bold=False)
+                after_icon_x = icon_x + ext_c_w
 
             # Victim name + ship
-            self.draw_text_halo(cr, after_icon_x, y, victim_name, vr, vg, vb,
-                                alpha=alpha, font_size=font_size, bold=True)
+            ext_v_w = self.draw_cached_text(cr, after_icon_x, y, victim_name, vr, vg, vb,
+                                            alpha=alpha, font_size=font_size, bold=True)
             victim_ship = self._ship_names.get(victim_id, "")
             if victim_ship:
-                ext_v = cr.text_extents(victim_name)
                 ship_text_v = f" ({victim_ship})"
-                self.draw_text_halo(cr, after_icon_x + ext_v.width, y, ship_text_v, 0.85, 0.85, 0.85,
-                                    alpha=alpha * 0.7, font_size=font_size * 0.85, bold=False)
+                self.draw_cached_text(cr, after_icon_x + ext_v_w, y, ship_text_v, 0.85, 0.85, 0.85,
+                                      alpha=alpha * 0.7, font_size=font_size * 0.85, bold=False)
 
         cr.restore()  # end clip

@@ -183,6 +183,9 @@ class Layer(ABC):
         """
         ...
 
+    # Text surface cache: (text, font_family, font_size_int, bold, r8, g8, b8) → ImageSurface
+    _text_cache: dict[tuple, cairo.ImageSurface] = {}
+
     @staticmethod
     def draw_text_halo(
         cr: cairo.Context,
@@ -197,26 +200,132 @@ class Layer(ABC):
         bold: bool = False,
         outline_width: float = 3.0,
     ) -> None:
-        """Draw text with a dark stroke halo for readability.
+        """Draw text with a dark shadow for readability.
 
-        The halo guarantees text is readable against any background.
+        Uses a double-draw shadow technique instead of text_path+stroke
+        for much better performance.
         """
-        cr.select_font_face(
-            _font_for_text(text),
-            cairo.FONT_SLANT_NORMAL,
-            cairo.FONT_WEIGHT_BOLD if bold else cairo.FONT_WEIGHT_NORMAL,
-        )
+        font_family = _font_for_text(text)
+        weight = cairo.FONT_WEIGHT_BOLD if bold else cairo.FONT_WEIGHT_NORMAL
+        cr.select_font_face(font_family, cairo.FONT_SLANT_NORMAL, weight)
         cr.set_font_size(font_size)
 
-        # 1. Dark stroke outline
-        cr.move_to(x, y)
-        cr.text_path(text)
-        cr.set_source_rgba(0, 0, 0, 0.9 * alpha)
-        cr.set_line_width(outline_width)
-        cr.set_line_join(cairo.LINE_JOIN_ROUND)
-        cr.stroke()
+        # Shadow offset scaled to font size
+        offset = max(1.0, font_size * 0.08)
 
-        # 2. Fill on top
+        # 1. Dark shadow (offset down-right)
+        cr.set_source_rgba(0, 0, 0, 0.85 * alpha)
+        cr.move_to(x + offset, y + offset)
+        cr.show_text(text)
+
+        # 2. Dark shadow (offset up-left for fuller coverage)
+        cr.set_source_rgba(0, 0, 0, 0.5 * alpha)
+        cr.move_to(x - offset * 0.5, y - offset * 0.5)
+        cr.show_text(text)
+
+        # 3. Main text on top
         cr.set_source_rgba(r, g, b, alpha)
         cr.move_to(x, y)
         cr.show_text(text)
+
+    @staticmethod
+    def get_cached_text(
+        cr: cairo.Context,
+        text: str,
+        font_size: float,
+        bold: bool,
+        r: float,
+        g: float,
+        b: float,
+    ) -> tuple[cairo.ImageSurface, float, float]:
+        """Get or create a cached text surface with shadow halo.
+
+        Returns (surface, width, height) where width/height are the
+        padded surface dimensions. The text baseline is at pad_y from top.
+        """
+        font_family = _font_for_text(text)
+        # Quantize to avoid cache explosion
+        fs_key = round(font_size * 2)
+        r8, g8, b8 = int(r * 255), int(g * 255), int(b * 255)
+        key = (text, font_family, fs_key, bold, r8, g8, b8)
+
+        cached = Layer._text_cache.get(key)
+        if cached is not None:
+            return cached
+
+        weight = cairo.FONT_WEIGHT_BOLD if bold else cairo.FONT_WEIGHT_NORMAL
+        cr.select_font_face(font_family, cairo.FONT_SLANT_NORMAL, weight)
+        cr.set_font_size(font_size)
+        extents = cr.text_extents(text)
+
+        offset = max(1.0, font_size * 0.08)
+        pad = int(offset * 2 + 2)
+        w = int(extents.width + pad * 2 + 2)
+        h = int(extents.height + pad * 2 + 2)
+        if w <= 0 or h <= 0:
+            # Degenerate — return a 1x1 surface
+            surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1)
+            result = (surf, 0.0, 0.0)
+            Layer._text_cache[key] = result
+            return result
+
+        surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, w, h)
+        tc = cairo.Context(surf)
+        tc.select_font_face(font_family, cairo.FONT_SLANT_NORMAL, weight)
+        tc.set_font_size(font_size)
+
+        tx = pad - extents.x_bearing
+        ty = pad - extents.y_bearing  # y_bearing is negative (ascent above baseline)
+
+        tc.set_source_rgba(0, 0, 0, 0.85)
+        tc.move_to(tx + offset, ty + offset)
+        tc.show_text(text)
+
+        tc.set_source_rgba(0, 0, 0, 0.5)
+        tc.move_to(tx - offset * 0.5, ty - offset * 0.5)
+        tc.show_text(text)
+
+        tc.set_source_rgba(r, g, b, 1.0)
+        tc.move_to(tx, ty)
+        tc.show_text(text)
+
+        surf.flush()
+        ascent = -extents.y_bearing  # positive distance from baseline to top
+        result = (surf, extents.width, ascent)
+        Layer._text_cache[key] = result
+        return result
+
+    @staticmethod
+    def draw_cached_text(
+        cr: cairo.Context,
+        x: float,
+        y: float,
+        text: str,
+        r: float,
+        g: float,
+        b: float,
+        alpha: float = 1.0,
+        font_size: float = 10.0,
+        bold: bool = False,
+    ) -> float:
+        """Draw text using cached surface. Returns the text width."""
+        surf, text_w, ascent = Layer.get_cached_text(cr, text, font_size, bold, r, g, b)
+        if surf.get_width() <= 1:
+            return 0.0
+
+        offset = max(1.0, font_size * 0.08)
+        pad = int(offset * 2 + 2)
+
+        # Position: x,y is the text origin (left baseline)
+        sx = x - pad
+        # The baseline in the cached surface is at pad + ascent from top
+        sy = y - pad - ascent
+
+        cr.save()
+        cr.set_source_surface(surf, sx, sy)
+        if alpha < 0.99:
+            cr.paint_with_alpha(alpha)
+        else:
+            cr.paint()
+        cr.restore()
+        return text_w

@@ -126,24 +126,22 @@ class HealthBarLayer(Layer):
         self, cr: cairo.Context, px: float, py: float,
         name: str,
     ) -> None:
-        """Draw ship name centered below the HP bar with dark halo."""
-        cr.save()
+        """Draw ship name centered below the HP bar using cached text surface."""
         s = self.ctx.scale
         font_size = self.SHIP_NAME_FONT_SIZE * s
-        cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-        cr.set_font_size(font_size)
-
-        extents = cr.text_extents(name)
-        tx = px - extents.width / 2
-        ty = py + (self.BAR_OFFSET_Y + self.BAR_HEIGHT + self.SHIP_NAME_OFFSET_Y) * s
-
         r, g, b = self.SHIP_NAME_COLOR
-        self.draw_text_halo(
+
+        surf, text_w, text_h = self.get_cached_text(cr, name, font_size, False, r, g, b)
+        if surf.get_width() <= 1:
+            return
+
+        tx = px - text_w / 2
+        ty = py + (self.BAR_OFFSET_Y + self.BAR_HEIGHT + self.SHIP_NAME_OFFSET_Y) * s
+        self.draw_cached_text(
             cr, tx, ty, name,
             r, g, b, alpha=1.0,
-            font_size=font_size, bold=False, outline_width=1.5 * s,
+            font_size=font_size, bold=False,
         )
-        cr.restore()
 
     @staticmethod
     def _hp_color(fraction: float) -> tuple[float, float, float]:

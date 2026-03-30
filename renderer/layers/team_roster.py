@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import cairo
 
-from renderer.assets import CONSUMABLE_TYPE_ID_MAP, CONSUMABLE_TYPE_TO_ICONS
+from renderer.assets import CONSUMABLE_TYPE_ID_MAP, CONSUMABLE_TYPE_TO_ICONS, CONSUMABLE_TYPE_TO_CATEGORY
 from renderer.layers.base import Layer, RenderContext, FONT_FAMILY, _font_for_text
 
 _SPECIES_TO_ICON: dict[str, str] = {
@@ -35,7 +35,7 @@ class TeamRosterLayer(Layer):
     ICON_SIZE = 18
     NAME_FONT_SIZE = 13.0
     SHIP_FONT_SIZE = 11.0
-    STAT_FONT_SIZE = 12.0
+    STAT_FONT_SIZE = 13.0
     CONS_ICON_SIZE = 13
     CONS_FONT_SIZE = 10.0
     HP_BAR_WIDTH = 60
@@ -72,30 +72,75 @@ class TeamRosterLayer(Layer):
                     self._cons_icons[type_id] = all_icons[icon_name]
                     break
 
-        # Build per-entity consumable timeline with exact cooldowns.
-        # Since this is a replay we know all future activations, so we can
-        # compute exact cooldown for each use: cooldown = next_activation - (activated_at + duration).
-        # Format: entity_id → list of (activated_at, cons_id, duration, cooldown_end)
-        # cooldown_end = inf if no next activation for that cons_id.
+        # Build per-entity base reload lookup from ship_consumables.json
+        # cons_id → base reload seconds (for fallback on last use)
+        from renderer.assets import load_ship_consumables
+        ship_consumables = load_ship_consumables(ctx.config.gamedata_path)
+        self._entity_reload: dict[int, dict[int, float]] = {}  # entity_id → {cons_id: reload_s}
+        for entity_id, player in ctx.player_lookup.items():
+            if not player.ship_id:
+                continue
+            cons = ship_consumables.get(player.ship_id, {})
+            timings = cons.get("timings", {})
+            if not timings:
+                continue
+            # Build slot index → timing: abilities and slots lists are parallel
+            abilities = cons.get("abilities", [])
+            slots = cons.get("slots", [])
+            slot_timings: dict[int, float] = {}  # slot index → reload
+            for idx, cat in enumerate(slots):
+                if cat in timings:
+                    slot_timings[idx] = timings[cat]
+
+            reloads: dict[int, float] = {}
+            for type_id, type_name in CONSUMABLE_TYPE_ID_MAP.items():
+                # Direct category match
+                category = CONSUMABLE_TYPE_TO_CATEGORY.get(type_name)
+                if category and category in timings:
+                    reloads[type_id] = timings[category]
+                elif "unknown" in timings:
+                    # Fallback: if this type's icon matches an ability in the
+                    # 'unknown' slot, use the unknown timing
+                    icon_candidates = CONSUMABLE_TYPE_TO_ICONS.get(type_name, [])
+                    for idx, ability in enumerate(abilities):
+                        if ability in icon_candidates and idx < len(slots) and slots[idx] == "unknown":
+                            reloads[type_id] = timings["unknown"]
+                            break
+            if reloads:
+                self._entity_reload[entity_id] = reloads
+
+        # Build per-entity consumable timeline with cooldowns.
+        # For consecutive uses: cooldown_end = next activation time.
+        # For last use: cooldown_end = active_end + base reload from GameParams.
         tracker = getattr(ctx.replay, "_tracker", None)
         raw_activations = getattr(tracker, "_consumable_activations", {}) if tracker else {}
 
         self._cons_timeline: dict[int, list[tuple[float, int, float, float]]] = {}
         for entity_id, acts in raw_activations.items():
-            # Group activations by cons_id to compute cooldowns
-            by_cons: dict[int, list[tuple[float, float]]] = {}  # cons_id → [(activated_at, duration)]
+            by_cons: dict[int, list[tuple[float, float]]] = {}
             for activated_at, cons_id, duration in acts:
                 by_cons.setdefault(cons_id, []).append((activated_at, duration))
 
+            entity_reloads = self._entity_reload.get(entity_id, {})
             timeline: list[tuple[float, int, float, float]] = []
             for cons_id, uses in by_cons.items():
                 uses_sorted = sorted(uses, key=lambda x: x[0])
+                base_reload = entity_reloads.get(cons_id, 0)
                 for i, (activated_at, duration) in enumerate(uses_sorted):
                     active_end = activated_at + duration
                     if i + 1 < len(uses_sorted):
-                        cooldown_end = uses_sorted[i + 1][0]
+                        gap_end = uses_sorted[i + 1][0]
+                        # Use the gap if shorter than base reload (player used it ASAP),
+                        # otherwise cap at base reload (player waited)
+                        if base_reload > 0:
+                            cooldown_end = min(gap_end, active_end + base_reload)
+                        else:
+                            cooldown_end = gap_end
                     else:
-                        cooldown_end = float("inf")
+                        if base_reload > 0:
+                            cooldown_end = active_end + base_reload
+                        else:
+                            cooldown_end = float("inf")
                     timeline.append((activated_at, cons_id, active_end, cooldown_end))
             self._cons_timeline[entity_id] = sorted(timeline, key=lambda x: x[0])
 
@@ -130,8 +175,8 @@ class TeamRosterLayer(Layer):
         for team in self._teams.values():
             team.sort(key=lambda eid: (ctx.player_lookup[eid].name or "").lower())
 
-        # Kills from DeathEvents
-        self._kills: dict[int, int] = {}
+        # Kills from DeathEvents (timestamp-sorted for incremental accumulation)
+        self._kill_events: list[tuple[float, int]] = []  # (timestamp, killer_id)
         seen_deaths: set = set()
         for event in ctx.replay.events:
             if type(event).__name__ == "DeathEvent":
@@ -142,7 +187,10 @@ class TeamRosterLayer(Layer):
                     seen_deaths.add(key)
                     killer_id = event.killer_id
                     if killer_id and killer_id != event.victim_id:
-                        self._kills[killer_id] = self._kills.get(killer_id, 0) + 1
+                        self._kill_events.append((event.timestamp, killer_id))
+        self._kill_events.sort(key=lambda x: x[0])
+        self._kills: dict[int, int] = {}
+        self._kill_idx: int = 0
 
         # Damage dealt from DamageEvents (attacker-attributed)
         self._damage_events: list[tuple[float, int, float]] = []
@@ -159,6 +207,14 @@ class TeamRosterLayer(Layer):
         config = self.ctx.config
         panel_w = config.panel_width
         total_h = config.minimap_size
+
+        # Accumulate kills
+        while self._kill_idx < len(self._kill_events):
+            t, killer_id = self._kill_events[self._kill_idx]
+            if t > timestamp:
+                break
+            self._kills[killer_id] = self._kills.get(killer_id, 0) + 1
+            self._kill_idx += 1
 
         # Accumulate damage dealt
         while self._dmg_idx < len(self._damage_events):
@@ -282,7 +338,7 @@ class TeamRosterLayer(Layer):
                 cr.restore()
 
         text_x = self.PAD_X + self.ICON_SIZE + 5
-        stat_x = panel_w - self.PAD_X   # right-align stats here
+        stat_x = panel_w - self.PAD_X - self.HP_BAR_WIDTH - 6  # leave room for HP bar on right
         stat_icon_size = 11
 
         # --- Line 1: player name (left) | kills (right) ---
@@ -295,12 +351,10 @@ class TeamRosterLayer(Layer):
         cr.show_text(kills_text)
 
         name = player.name or "?"
-        cr.select_font_face(_font_for_text(name), cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        cr.set_font_size(self.NAME_FONT_SIZE)
         max_name_w = stat_x - kills_ext.width - 6 - text_x
-        cr.set_source_rgba(tr, tg, tb, alpha)
-        cr.move_to(text_x, line1_y)
-        cr.show_text(_truncate(cr, name, max_name_w))
+        truncated_name = _truncate(cr, name, max_name_w, self.NAME_FONT_SIZE)
+        self.draw_cached_text(cr, text_x, line1_y, truncated_name, tr, tg, tb,
+                              alpha=alpha, font_size=self.NAME_FONT_SIZE, bold=True)
 
         # --- Line 2: ship name (left) | consumables (center) | damage (right) ---
         dmg_text = _fmt_damage(damage)
@@ -327,13 +381,9 @@ class TeamRosterLayer(Layer):
         # Ship name on the left of line 2
         ship_name = self._entity_ship_name.get(entity_id, "")
         if ship_name:
-            cr.select_font_face(_font_for_text(ship_name), cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-            cr.set_font_size(self.SHIP_FONT_SIZE)
-            cr.set_source_rgba(0.72, 0.72, 0.72, alpha)
-            ship_ext = cr.text_extents(ship_name)
-            cr.move_to(text_x, line2_y)
-            cr.show_text(ship_name)
-            ship_end_x = text_x + ship_ext.width + 6
+            ship_w = self.draw_cached_text(cr, text_x, line2_y, ship_name, 0.72, 0.72, 0.72,
+                                           alpha=alpha, font_size=self.SHIP_FONT_SIZE, bold=False)
+            ship_end_x = text_x + ship_w + 6
         else:
             ship_end_x = text_x
 
@@ -342,14 +392,19 @@ class TeamRosterLayer(Layer):
         if cons_status and is_alive:
             self._draw_cons_line(cr, ship_end_x + 6, line2_y, cons_status, cons_max_x)
 
-        # --- HP strip at bottom ---
+        # --- HP bar to the right of kills/damage, against panel edge ---
+        hp_w = self.HP_BAR_WIDTH
+        hp_h = self.HP_BAR_HEIGHT
+        hp_bar_x = panel_w - self.PAD_X - hp_w
+        hp_bar_y = y + row_h / 2 - hp_h / 2  # vertically centered in row
+
         cr.set_source_rgba(0.12, 0.12, 0.12, 0.9)
-        cr.rectangle(0, hp_y, panel_w, 3)
+        cr.rectangle(hp_bar_x, hp_bar_y, hp_w, hp_h)
         cr.fill()
         if hp_frac > 0:
             hr, hg, hb = (0.2, 0.9, 0.2) if hp_frac > 0.66 else ((1.0, 0.85, 0.0) if hp_frac > 0.33 else (1.0, 0.2, 0.2))
             cr.set_source_rgba(hr, hg, hb, alpha)
-            cr.rectangle(0, hp_y, panel_w * hp_frac, 3)
+            cr.rectangle(hp_bar_x, hp_bar_y, hp_w * hp_frac, hp_h)
             cr.fill()
 
         return y + row_h
@@ -439,7 +494,10 @@ def _fmt_seconds(sec: float) -> str:
     return f"{s}s"
 
 
-def _truncate(cr: cairo.Context, text: str, max_w: float) -> str:
+def _truncate(cr: cairo.Context, text: str, max_w: float, font_size: float = 0) -> str:
+    if font_size > 0:
+        cr.select_font_face(_font_for_text(text), cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(font_size)
     ext = cr.text_extents(text)
     if ext.width <= max_w:
         return text
