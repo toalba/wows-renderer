@@ -29,7 +29,7 @@ try:
 
     config = RenderConfig(
         gamedata_path=GAMEDATA,
-        speed=10.0,
+        speed=20.0,
         fps=20,
         start_time=0.0,
         end_time=None,  # Full replay

@@ -46,10 +46,9 @@ wows-minimap-renderer/
 - Dark navy blue background
 - Self player position tracking via PLAYER_ORIENTATION (0x2C) packets
 
-### Known Bug: Player-to-Entity Metadata Mismatch
-**Ship positions are correct, but the wrong player name and ship class appear on ships.**
-The roster matching in `wows-replay-parser/roster.py` uses order-based matching within teams (sorted entity IDs matched to JSON header vehicle order), which doesn't produce correct results. Self player is correct (matched via `owner == self_avatar_eid`), but all other players are shuffled.
-See parser CLAUDE.md "Roster: Vehicle-to-Player Matching" section for full details on what's been tried and what data is available.
+### Fixed: Player-to-Entity Metadata Matching
+Player-to-entity matching now uses `onArenaStateReceived` pickle data for authoritative ID-based matching.
+See parser CLAUDE.md "Roster: Vehicle-to-Player Matching" section for details.
 
 ### Temp Files (can be deleted)
 - `GameParams-0.json` (386MB) — full GameParams dump, research artifact

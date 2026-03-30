@@ -126,7 +126,12 @@ class MinimapRenderer:
         end = config.end_time if config.end_time is not None else replay.duration
         dt = config.speed / config.fps  # game-seconds per frame
 
-        total_frames = int((end - start) / dt) + 1
+        timestamps = []
+        t = start
+        while t <= end:
+            timestamps.append(t)
+            t += dt
+        total_frames = len(timestamps)
 
         # Create reusable cairo surface
         width = config.total_width
@@ -136,33 +141,27 @@ class MinimapRenderer:
 
         # Open ffmpeg pipe
         with FFmpegPipe(output_path, width, height, config.fps, config.crf, config.codec) as pipe:
-            t = start
-            frame_idx = 0
+            # Use iter_states for O(delta) incremental state queries
+            # instead of state_at() which is O(history) per frame.
+            state_iter = replay.iter_states(timestamps)
 
-            while t <= end:
+            for frame_idx, (t, state) in enumerate(zip(timestamps, state_iter)):
                 # 1. Clear surface (dark navy blue)
                 cr.set_source_rgb(0.05, 0.08, 0.15)
                 cr.paint()
 
-                # 2. Get game state at this timestamp
-                state = replay.state_at(t)
-
-                # 3. Draw all layers
+                # 2. Draw all layers
                 for layer in self.layers:
                     cr.save()
                     layer.render(cr, state, t)
                     cr.restore()
 
-                # 4. Extract frame bytes and pipe to ffmpeg
+                # 3. Write frame directly from surface buffer (no copy)
                 surface.flush()
-                buf = surface.get_data()
-                pipe.write_frame(bytes(buf))
+                pipe.write_frame(surface.get_data())
 
-                # 5. Progress
-                frame_idx += 1
+                # 4. Progress
                 if progress_callback:
-                    progress_callback(frame_idx, total_frames)
-
-                t += dt
+                    progress_callback(frame_idx + 1, total_frames)
 
         return output_path

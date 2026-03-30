@@ -32,6 +32,9 @@ class FFmpegPipe:
             "-r", str(fps),              # Frame rate
             "-i", "pipe:0",             # Read from stdin
             "-c:v", codec,               # Video codec
+            "-preset", "ultrafast",      # Speed over compression (content is simple)
+            "-tune", "animation",        # Optimized for flat graphics / few colors
+            "-threads", "0",             # Use all available cores
             "-crf", str(crf),            # Quality
             "-pix_fmt", "yuv420p",       # Output pixel format (Discord/browser compat)
             "-movflags", "+faststart",   # Web-optimized mp4
@@ -45,16 +48,13 @@ class FFmpegPipe:
             stderr=subprocess.PIPE,
         )
 
-    def write_frame(self, bgra_bytes: bytes) -> None:
-        """Write one raw BGRA frame to ffmpeg."""
-        expected = self.width * self.height * 4
-        if len(bgra_bytes) != expected:
-            raise ValueError(
-                f"Frame size mismatch: got {len(bgra_bytes)} bytes, "
-                f"expected {expected} ({self.width}x{self.height}x4)"
-            )
+    def write_frame(self, frame_data: bytes | memoryview) -> None:
+        """Write one raw BGRA frame to ffmpeg.
+
+        Accepts bytes or memoryview (from cairo surface.get_data()).
+        """
         assert self.proc.stdin is not None
-        self.proc.stdin.write(bgra_bytes)
+        self.proc.stdin.write(frame_data)
         self.frame_count += 1
 
     def close(self) -> None:
