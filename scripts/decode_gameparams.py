@@ -169,6 +169,13 @@ _CONSUMABLE_PATTERNS: dict[str, str] = {
     "MainWeaponReloader": "main_battery_reload",
     "AcousticWave": "submarine_surveillance",
     "SubmarineLocator": "submarine_surveillance",
+    "Spotter": "spotter_plane",
+    "Scout": "spotter_plane",
+    "ArtilleryBooster": "main_battery_reload",
+    "Hydrophone": "hydrophone",
+    "EnergyFreeze": "energy_freeze",
+    "GoDeep": "go_deep",
+    "ArmorBuff": "armor_buff",
 }
 
 
@@ -219,9 +226,10 @@ def extract_ship_consumables(gp: dict) -> dict[str, dict]:
 
         ship_abilities = obj.get("ShipAbilities", {})
         ability_names: list[str] = []
-        slot_categories: list[str] = []
+        slots: list[list[str]] = []
+        all_categories: set[str] = set()
         ranges: dict[str, float] = {}
-        timings: dict[str, dict] = {}
+        timings: dict[str, float] = {}
 
         for slot_key in sorted(ship_abilities.keys()):
             slot_val = ship_abilities[slot_key]
@@ -233,38 +241,40 @@ def extract_ship_consumables(gp: dict) -> dict[str, dict]:
             if not abils:
                 continue
 
+            slot_options: list[str] = []
             for option in abils:
-                if isinstance(option, (list, tuple)) and len(option) >= 1:
-                    ability_name = option[0]
-                    variant_name = option[1] if len(option) >= 2 else ""
-                    ability_names.append(ability_name)
-                    category = _classify_ability(ability_name)
-                    if category and category not in slot_categories:
-                        slot_categories.append(category)
+                if not isinstance(option, (list, tuple)) or len(option) < 1:
+                    continue
+                ability_name = option[0]
+                variant_name = option[1] if len(option) >= 2 else ""
+                ability_names.append(ability_name)
+                category = _classify_ability(ability_name)
+                if category and category not in slot_options:
+                    slot_options.append(category)
+                all_categories.add(category)
 
-                    # Look up variant data for ranges and timings
-                    ab = abilities.get(ability_name, {})
-                    variant = ab.get(variant_name, {})
-                    if isinstance(variant, dict):
-                        # Base reload time (cooldown)
-                        reload_t = variant.get("reloadTime", 0)
-                        if category and reload_t:
-                            timings[category] = float(reload_t)
-                        if category in ("hydroacoustic", "surveillance_radar", "submarine_surveillance"):
-                            logic = variant.get("logic", {})
-                            if isinstance(logic, dict):
-                                dist_ship = logic.get("distShip", 0)
-                                if dist_ship:
-                                    ct = _classify_consumable_type(ability_name)
-                                    if ct:
-                                        ranges[ct] = dist_ship * 30.0
+                ab = abilities.get(ability_name, {})
+                variant = ab.get(variant_name, {})
+                if isinstance(variant, dict):
+                    reload_t = variant.get("reloadTime", 0)
+                    if category and reload_t:
+                        timings[category] = float(reload_t)
+                    if category in ("hydroacoustic", "surveillance_radar", "submarine_surveillance"):
+                        logic = variant.get("logic", {})
+                        if isinstance(logic, dict):
+                            dist_ship = logic.get("distShip", 0)
+                            if dist_ship:
+                                ct = _classify_consumable_type(ability_name)
+                                if ct:
+                                    ranges[ct] = dist_ship * 30.0
 
-                    break  # Only first option per slot
+            if slot_options:
+                slots.append(slot_options)
 
         result[str(ship_id)] = {
-            "slots": slot_categories,
+            "slots": slots,
             "abilities": ability_names,
-            "has_repair_party": "repair_party" in slot_categories,
+            "has_repair_party": "repair_party" in all_categories,
             "ranges": ranges,
             "timings": timings,
         }
