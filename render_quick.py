@@ -16,7 +16,7 @@ from wows_replay_parser import parse_replay
 
 REPLAY = sys.argv[1] if len(sys.argv) > 1 else "20260322_225740_PBSD598-Black-Cossack_15_NE_north.wowsreplay"
 OUTPUT = sys.argv[2] if len(sys.argv) > 2 else "output.mp4"
-GAMEDATA = Path("../wows-gamedata/data")
+GAMEDATA = Path("wows-gamedata/data")
 
 replay = parse_replay(REPLAY, str(GAMEDATA / "scripts_entity" / "entity_defs"))
 print(f"Parsed: {replay.map_name}, {replay.duration:.0f}s, {len(replay.players)} players")

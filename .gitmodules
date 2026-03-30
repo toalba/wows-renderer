@@ -1,0 +1,3 @@
+[submodule "wows-gamedata"]
+	path = wows-gamedata
+	url = git@github.com:toalba/wows-gamedata.git
