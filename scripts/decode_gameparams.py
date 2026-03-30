@@ -153,6 +153,118 @@ def generate_ship_names(ships: dict[str, dict], mo_path: Path) -> dict[str, str]
     return names
 
 
+_CONSUMABLE_PATTERNS: dict[str, str] = {
+    "CrashCrew": "damage_control",
+    "RegenCrew": "repair_party",
+    "RegenerateHealth": "repair_party",
+    "AirDefenseDisp": "defensive_aa",
+    "Fighter": "catapult_fighter",
+    "RegenPlane": "catapult_fighter",
+    "SpeedBoost": "engine_boost",
+    "Speedbooster": "engine_boost",
+    "SonarSearch": "hydroacoustic",
+    "RLSSearch": "surveillance_radar",
+    "SmokeGenerator": "smoke_screen",
+    "TorpedoReloader": "torpedo_reload",
+    "MainWeaponReloader": "main_battery_reload",
+    "AcousticWave": "submarine_surveillance",
+    "SubmarineLocator": "submarine_surveillance",
+}
+
+
+def _classify_ability(ability_name: str) -> str:
+    for pattern, category in _CONSUMABLE_PATTERNS.items():
+        if pattern.lower() in ability_name.lower():
+            return category
+    return "unknown"
+
+
+def _classify_consumable_type(ability_name: str) -> str:
+    name_lower = ability_name.lower()
+    if "sonarsearch" in name_lower:
+        return "sonar"
+    if "rlssearch" in name_lower:
+        return "rls"
+    if "hydrophone" in name_lower or "submarinelocator" in name_lower:
+        return "hydrophone"
+    return ""
+
+
+def extract_ship_consumables(gp: dict) -> dict[str, dict]:
+    """Extract consumable loadouts per ship from GameParams.
+
+    Returns:
+        {ship_id: {"slots": [...], "abilities": [...],
+                   "has_repair_party": bool, "ranges": {...}}}
+    """
+    # Index all Ability entities by name
+    abilities: dict[str, dict] = {}
+    for name, obj in gp.items():
+        if not isinstance(obj, dict):
+            continue
+        ti = obj.get("typeinfo")
+        if isinstance(ti, dict) and ti.get("type") == "Ability":
+            abilities[name] = obj
+
+    result: dict[str, dict] = {}
+    for name, obj in gp.items():
+        if not isinstance(obj, dict):
+            continue
+        ti = obj.get("typeinfo")
+        if not isinstance(ti, dict) or ti.get("type") != "Ship":
+            continue
+        ship_id = obj.get("id")
+        if ship_id is None:
+            continue
+
+        ship_abilities = obj.get("ShipAbilities", {})
+        ability_names: list[str] = []
+        slot_categories: list[str] = []
+        ranges: dict[str, float] = {}
+
+        for slot_key in sorted(ship_abilities.keys()):
+            slot_val = ship_abilities[slot_key]
+            if not isinstance(slot_val, dict):
+                abils = slot_val if isinstance(slot_val, list) else []
+            else:
+                abils = slot_val.get("abils", [])
+
+            if not abils:
+                continue
+
+            for option in abils:
+                if isinstance(option, (list, tuple)) and len(option) >= 1:
+                    ability_name = option[0]
+                    variant_name = option[1] if len(option) >= 2 else ""
+                    ability_names.append(ability_name)
+                    category = _classify_ability(ability_name)
+                    if category and category not in slot_categories:
+                        slot_categories.append(category)
+
+                    # Look up detection range for radar/hydro
+                    if category in ("hydroacoustic", "surveillance_radar", "submarine_surveillance"):
+                        ab = abilities.get(ability_name, {})
+                        variant = ab.get(variant_name, {})
+                        logic = variant.get("logic", {})
+                        if isinstance(logic, dict):
+                            dist_ship = logic.get("distShip", 0)
+                            if dist_ship:
+                                ct = _classify_consumable_type(ability_name)
+                                if ct:
+                                    ranges[ct] = dist_ship * 30.0
+
+                    break  # Only first option per slot
+
+        result[str(ship_id)] = {
+            "slots": slot_categories,
+            "abilities": ability_names,
+            "has_repair_party": "repair_party" in slot_categories,
+            "ranges": ranges,
+        }
+
+    return result
+
+
 def extract_projectiles(gp: dict) -> dict[str, dict]:
     """Extract projectiles lookup: {id: {a: ammoType, c: caliber_mm}}."""
     projectiles = {}
@@ -255,6 +367,12 @@ def main():
     names_path.write_text(json.dumps(ship_names, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     mo_count = sum(1 for n in ship_names.values() if n)
     print(f"Saved {mo_count} ship display names to {names_path}")
+
+    # Generate ship consumable loadouts
+    consumables = extract_ship_consumables(gp)
+    cons_path = args.output_dir / "ship_consumables.json"
+    cons_path.write_text(json.dumps(consumables, separators=(",", ":")))
+    print(f"Saved {len(consumables)} ship consumable loadouts to {cons_path}")
 
     if args.ships_only:
         return
