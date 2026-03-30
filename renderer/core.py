@@ -60,6 +60,18 @@ class MinimapRenderer:
         )
         return cls(config, replay=replay)
 
+    @staticmethod
+    def _detect_battle_start(replay: ParsedReplay) -> float:
+        """Find when battleStage transitions to 0 (battle active).
+
+        battleStage values: 2=loading, 1=countdown, 0=active, 3=ended.
+        """
+        tracker = replay._tracker
+        for change in tracker._history:
+            if change.property_name == "battleStage" and change.new_value == 0:
+                return change.timestamp
+        return 0.0
+
     def add_layer(self, layer: Layer) -> None:
         """Add a layer to the rendering stack. First added = bottom."""
         self.layers.append(layer)
@@ -123,6 +135,10 @@ class MinimapRenderer:
 
         # Compute frame timestamps
         start = config.start_time
+        if start == 0:
+            # Auto-detect match start from battleStage (0 = battle active)
+            # Start 10s early so the video begins gracefully during countdown
+            start = max(0.0, self._detect_battle_start(replay) - 10.0)
         end = config.end_time if config.end_time is not None else replay.duration
         dt = config.speed / config.fps  # game-seconds per frame
 
@@ -146,9 +162,11 @@ class MinimapRenderer:
             state_iter = replay.iter_states(timestamps)
 
             for frame_idx, (t, state) in enumerate(zip(timestamps, state_iter)):
-                # 1. Clear surface (dark navy blue)
-                cr.set_source_rgb(0.05, 0.08, 0.15)
+                # 1. Clear surface
+                cr.save()
+                cr.set_operator(cairo.OPERATOR_CLEAR)
                 cr.paint()
+                cr.restore()
 
                 # 2. Draw all layers
                 for layer in self.layers:

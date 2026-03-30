@@ -8,11 +8,12 @@ import cairo
 from renderer.assets import load_projectiles_db
 from renderer.layers.base import Layer, RenderContext
 
-# Ammo type colors: AP=white, HE=orange, SAP=pink
+# Ammo type colors: AP=white, HE=orange, SAP/CS=purple
 _AMMO_COLORS: dict[str, tuple[float, float, float]] = {
     "AP": (1.0, 1.0, 1.0),      # white
     "HE": (1.0, 0.6, 0.1),      # orange
-    "SAP": (1.0, 0.45, 0.7),    # pink
+    "SAP": (1.0, 0.45, 0.7),     # pink
+    "CS": (1.0, 0.45, 0.7),      # pink (CS = Combat Shell = SAP in GameParams)
 }
 _DEFAULT_AMMO_COLOR = (0.9, 0.9, 0.4)  # yellowish fallback
 
@@ -152,9 +153,16 @@ class ProjectileLayer(Layer):
                 if yaw_speed > 0:
                     maneuver = (target_yaw, yaw_speed)
 
+            # Use ShotDestroyedEvent for torpedo end time (same as shells)
+            destroy_t = destroy_map.get((evt.owner_id, evt.shot_id))
+            if destroy_t is not None and destroy_t > evt.timestamp:
+                end_t = destroy_t
+            else:
+                end_t = evt.timestamp + self.TORPEDO_MAX_LIFETIME
+
             torps.append({
                 "start_t": evt.timestamp,
-                "end_t": evt.timestamp + self.TORPEDO_MAX_LIFETIME,
+                "end_t": end_t,
                 "x": evt.x, "z": evt.z,
                 "dx": tdx, "dz": tdz,
                 "speed": speed,

@@ -30,10 +30,12 @@ class RenderConfig:
     })
     self_color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)  # White (own ship)
 
+    hud_height: int = 24  # score bar above minimap
+
     @property
     def total_width(self) -> int:
         return self.panel_width + self.minimap_size + self.panel_width
 
     @property
     def total_height(self) -> int:
-        return self.minimap_size
+        return self.minimap_size + self.hud_height

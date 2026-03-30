@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import cairo
 
-from renderer.layers.base import Layer, RenderContext
+from renderer.layers.base import Layer, RenderContext, FONT_FAMILY
 
 
 class HealthBarLayer(Layer):
@@ -21,7 +21,7 @@ class HealthBarLayer(Layer):
     BAR_HEIGHT = 3
     BAR_OFFSET_Y = 12  # Pixels below ship center
     BG_ALPHA = 0.7
-    SHIP_NAME_FONT_SIZE = 8.0
+    SHIP_NAME_FONT_SIZE = 10.0
     SHIP_NAME_OFFSET_Y = 7  # Pixels below HP bar
     SHIP_NAME_COLOR = (1.0, 1.0, 1.0)  # white
 
@@ -44,12 +44,16 @@ class HealthBarLayer(Layer):
 
             # Ship name
             if player.ship_id in ship_db:
-                name = ship_db[player.ship_id].get("name", "")
-                if name:
-                    parts = name.split("_", 1)
-                    display = parts[1] if len(parts) > 1 else parts[0]
-                    display = display.replace("_", " ")
-                    self._entity_ship_names[entity_id] = display
+                entry = ship_db[player.ship_id]
+                short = entry.get("short_name", "")
+                if short:
+                    self._entity_ship_names[entity_id] = short
+                else:
+                    name = entry.get("name", "")
+                    if name:
+                        parts = name.split("_", 1)
+                        display = parts[1] if len(parts) > 1 else parts[0]
+                        self._entity_ship_names[entity_id] = display.replace("_", " ")
 
             # Repair party check
             cons = ship_consumables.get(player.ship_id)
@@ -126,7 +130,7 @@ class HealthBarLayer(Layer):
         cr.save()
         s = self.ctx.scale
         font_size = self.SHIP_NAME_FONT_SIZE * s
-        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+        cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
         cr.set_font_size(font_size)
 
         extents = cr.text_extents(name)

@@ -4,7 +4,7 @@ import math
 
 import cairo
 
-from renderer.layers.base import Layer, RenderContext
+from renderer.layers.base import Layer, RenderContext, FONT_FAMILY
 
 
 class CapturePointLayer(Layer):
@@ -20,7 +20,7 @@ class CapturePointLayer(Layer):
     NEUTRAL_COLOR = (0.7, 0.7, 0.7)
     CONTESTED_COLOR = (1.0, 0.85, 0.0)  # Yellow for contested
     CAP_LABELS = "ABCDEFGH"
-    LABEL_FONT_SIZE = 18
+    LABEL_FONT_SIZE = 22
     DEFAULT_RADIUS = 75.0
 
     _cap_positions: dict[int, tuple[float, float]]
@@ -108,7 +108,9 @@ class CapturePointLayer(Layer):
             cr.stroke()
 
             # Progress arc (if being captured)
-            if cap and cap.progress > 0.01 and cap.has_invaders:
+            # Skip during pre-battle (battleStage != 0) — initial state can be stale
+            battle_active = state.battle.battle_stage == 0
+            if battle_active and cap and cap.progress > 0.01 and cap.has_invaders:
                 inv_r, inv_g, inv_b = self.NEUTRAL_COLOR
                 if cap.invader_team >= 0:
                     inv_display = self.ctx.raw_to_display_team(cap.invader_team)
@@ -151,7 +153,7 @@ class CapturePointLayer(Layer):
             label = self.CAP_LABELS[label_idx % len(self.CAP_LABELS)]
 
             cr.select_font_face(
-                "sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD
+                FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD
             )
             cr.set_font_size(self.LABEL_FONT_SIZE)
             ext = cr.text_extents(label)

@@ -74,6 +74,14 @@ def load_minimap(gamedata_path: Path, map_name: str) -> cairo.ImageSurface:
     return cairo.ImageSurface.create_from_png(str(minimap_path))
 
 
+def load_minimap_water(gamedata_path: Path, map_name: str) -> cairo.ImageSurface | None:
+    """Load the minimap water layer PNG, or None if not available."""
+    water_path = gamedata_path / map_name / "minimap_water.png"
+    if not water_path.exists():
+        return None
+    return cairo.ImageSurface.create_from_png(str(water_path))
+
+
 _ships_db: dict[int, dict] | None = None
 
 
@@ -95,6 +103,19 @@ def load_ships_db(gamedata_path: Path) -> dict[int, dict]:
     except (json.JSONDecodeError, ValueError) as e:
         log.warning("Failed to load ships.json: %s", e)
         _ships_db = {}
+
+    # Merge display names from ship_names.json if available
+    names_path = gamedata_path / "ship_names.json"
+    if names_path.exists():
+        try:
+            names = json.loads(names_path.read_text())
+            for k, display_name in names.items():
+                sid = int(k)
+                if sid in _ships_db:
+                    _ships_db[sid]["short_name"] = display_name
+        except (json.JSONDecodeError, ValueError) as e:
+            log.warning("Failed to load ship_names.json: %s", e)
+
     return _ships_db
 
 

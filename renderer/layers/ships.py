@@ -4,7 +4,7 @@ import math
 
 import cairo
 
-from renderer.layers.base import Layer, RenderContext
+from renderer.layers.base import Layer, RenderContext, FONT_FAMILY, _font_for_text
 
 
 # Species name from ships.json → icon key
@@ -31,7 +31,7 @@ class ShipLayer(Layer):
     DETECTED_ALPHA = 1.0
     UNDETECTED_ALPHA = 0.4
     NAME_OFFSET_Y = -14  # Pixels above ship center (at 760px)
-    NAME_FONT_SIZE = 9.0  # At 760px reference
+    NAME_FONT_SIZE = 11.0  # At 760px reference (scaled for Warhelios)
     # Off-white for primary labels (easier on the eyes than pure white)
     LABEL_COLOR = (0.91, 0.89, 0.85)  # #E8E4D9
 
@@ -141,12 +141,9 @@ class ShipLayer(Layer):
         if not name:
             return
         cr.save()
-        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        cr.set_font_size(self.NAME_FONT_SIZE)
-
         s = self.ctx.scale
         font_size = self.NAME_FONT_SIZE * s
-        cr.select_font_face("sans-serif", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.select_font_face(_font_for_text(name), cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         cr.set_font_size(font_size)
         extents = cr.text_extents(name)
         tx = px - extents.width / 2

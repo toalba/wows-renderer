@@ -5,6 +5,31 @@ from typing import TYPE_CHECKING
 
 import cairo
 
+# Primary font: WoWS Warhelios. CJK fallback: Source Han Sans CN (from gamedata).
+FONT_FAMILY = "Warhelios"
+FONT_FAMILY_CJK = "Source Han Sans CN Bold WH"
+
+
+def _has_cjk(text: str) -> bool:
+    """Return True if text contains any CJK characters."""
+    for ch in text:
+        cp = ord(ch)
+        if (0x4E00 <= cp <= 0x9FFF        # CJK Unified Ideographs
+            or 0x3400 <= cp <= 0x4DBF      # CJK Extension A
+            or 0x3000 <= cp <= 0x303F      # CJK Symbols and Punctuation
+            or 0x3040 <= cp <= 0x309F      # Hiragana
+            or 0x30A0 <= cp <= 0x30FF      # Katakana
+            or 0xAC00 <= cp <= 0xD7AF      # Hangul Syllables
+            or 0xFF00 <= cp <= 0xFFEF      # Fullwidth Forms
+            or 0x20000 <= cp <= 0x2A6DF):  # CJK Extension B
+            return True
+    return False
+
+
+def _font_for_text(text: str) -> str:
+    """Return the appropriate font family for the given text."""
+    return FONT_FAMILY_CJK if _has_cjk(text) else FONT_FAMILY
+
 if TYPE_CHECKING:
     from wows_replay_parser.api import ParsedReplay
     from wows_replay_parser.roster import PlayerInfo
@@ -129,7 +154,7 @@ class RenderContext:
         scaling = self.config.minimap_size / self.map_size
         half_mm = self.config.minimap_size / 2.0
         px = world_x * scaling + half_mm + self.config.panel_width
-        py = -world_z * scaling + half_mm
+        py = -world_z * scaling + half_mm + self.config.hud_height
         return (px, py)
 
 
@@ -177,7 +202,7 @@ class Layer(ABC):
         The halo guarantees text is readable against any background.
         """
         cr.select_font_face(
-            "sans-serif",
+            _font_for_text(text),
             cairo.FONT_SLANT_NORMAL,
             cairo.FONT_WEIGHT_BOLD if bold else cairo.FONT_WEIGHT_NORMAL,
         )
