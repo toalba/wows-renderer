@@ -108,6 +108,28 @@ def extract_ships(gp: dict) -> dict[str, dict]:
     return ships
 
 
+def extract_projectiles(gp: dict) -> dict[str, dict]:
+    """Extract projectiles lookup: {id: {a: ammoType, c: caliber_mm}}."""
+    projectiles = {}
+    for name, obj in gp.items():
+        if not isinstance(obj, dict):
+            continue
+        ti = obj.get("typeinfo")
+        if not isinstance(ti, dict) or ti.get("type") != "Projectile":
+            continue
+        proj_id = obj.get("id")
+        if proj_id is None:
+            continue
+        ammo_type = obj.get("ammoType", "")
+        caliber = obj.get("bulletDiametr", 0)  # in meters
+        caliber_mm = round(caliber * 1000) if caliber else 0
+        projectiles[str(proj_id)] = {
+            "a": ammo_type,
+            "c": caliber_mm,
+        }
+    return projectiles
+
+
 def make_serializable(obj):
     """Recursively convert non-JSON-serializable types."""
     if isinstance(obj, dict):
@@ -170,11 +192,16 @@ def main():
     gp = decode_gameparams(args.input)
     print(f"Loaded {len(gp)} entities")
 
-    # Always extract ships.json
+    # Always extract ships.json and projectiles.json
     ships = extract_ships(gp)
     ships_path = args.output_dir / "ships.json"
     ships_path.write_text(json.dumps(ships, indent=2, sort_keys=True))
     print(f"Saved {len(ships)} ships to {ships_path}")
+
+    projectiles = extract_projectiles(gp)
+    proj_path = args.output_dir / "projectiles.json"
+    proj_path.write_text(json.dumps(projectiles, separators=(",", ":")))
+    print(f"Saved {len(projectiles)} projectiles to {proj_path}")
 
     if args.ships_only:
         return
