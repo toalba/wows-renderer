@@ -221,6 +221,7 @@ def extract_ship_consumables(gp: dict) -> dict[str, dict]:
         ability_names: list[str] = []
         slot_categories: list[str] = []
         ranges: dict[str, float] = {}
+        timings: dict[str, dict] = {}
 
         for slot_key in sorted(ship_abilities.keys()):
             slot_val = ship_abilities[slot_key]
@@ -241,17 +242,22 @@ def extract_ship_consumables(gp: dict) -> dict[str, dict]:
                     if category and category not in slot_categories:
                         slot_categories.append(category)
 
-                    # Look up detection range for radar/hydro
-                    if category in ("hydroacoustic", "surveillance_radar", "submarine_surveillance"):
-                        ab = abilities.get(ability_name, {})
-                        variant = ab.get(variant_name, {})
-                        logic = variant.get("logic", {})
-                        if isinstance(logic, dict):
-                            dist_ship = logic.get("distShip", 0)
-                            if dist_ship:
-                                ct = _classify_consumable_type(ability_name)
-                                if ct:
-                                    ranges[ct] = dist_ship * 30.0
+                    # Look up variant data for ranges and timings
+                    ab = abilities.get(ability_name, {})
+                    variant = ab.get(variant_name, {})
+                    if isinstance(variant, dict):
+                        # Base reload time (cooldown)
+                        reload_t = variant.get("reloadTime", 0)
+                        if category and reload_t:
+                            timings[category] = float(reload_t)
+                        if category in ("hydroacoustic", "surveillance_radar", "submarine_surveillance"):
+                            logic = variant.get("logic", {})
+                            if isinstance(logic, dict):
+                                dist_ship = logic.get("distShip", 0)
+                                if dist_ship:
+                                    ct = _classify_consumable_type(ability_name)
+                                    if ct:
+                                        ranges[ct] = dist_ship * 30.0
 
                     break  # Only first option per slot
 
@@ -260,6 +266,7 @@ def extract_ship_consumables(gp: dict) -> dict[str, dict]:
             "abilities": ability_names,
             "has_repair_party": "repair_party" in slot_categories,
             "ranges": ranges,
+            "timings": timings,
         }
 
     return result
