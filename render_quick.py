@@ -11,6 +11,7 @@ from renderer.layers.projectiles import ProjectileLayer
 from renderer.layers.capture_points import CapturePointLayer
 from renderer.layers.health_bars import HealthBarLayer
 from renderer.layers.consumables import ConsumableLayer
+from renderer.layers.smoke import SmokeLayer
 from wows_replay_parser import parse_replay
 
 REPLAY = sys.argv[1] if len(sys.argv) > 1 else "20260322_225740_PBSD598-Black-Cossack_15_NE_north.wowsreplay"
@@ -22,7 +23,7 @@ print(f"Parsed: {replay.map_name}, {replay.duration:.0f}s, {len(replay.players)}
 
 config = RenderConfig(gamedata_path=GAMEDATA, speed=20.0, fps=20, minimap_size=1080, panel_width=420)
 renderer = MinimapRenderer(config)
-for L in [MapBackgroundLayer(), CapturePointLayer(), ProjectileLayer(),
+for L in [MapBackgroundLayer(), CapturePointLayer(), SmokeLayer(), ProjectileLayer(),
           ShipLayer(), HealthBarLayer(), ConsumableLayer(), HudLayer()]:
     renderer.add_layer(L)
 
