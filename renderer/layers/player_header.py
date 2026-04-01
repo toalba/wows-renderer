@@ -207,8 +207,12 @@ class PlayerHeaderLayer(Layer):
         # Text line: SHIP NAME + HP centered under silhouette, [CLAN] Player right-aligned
         text_y = sil_y + used_sil_h + name_font + 2 * s
 
-        # Left-align "SHIP NAME  HP" under the silhouette
-        tx = x_left
+        # Center "SHIP NAME  HP" under the silhouette
+        sil_draw_w = left_text_w  # fallback
+        if self._sil_fg:
+            sil_draw_w = self._sil_fg.get_width() * (used_sil_h / self._sil_fg.get_height())
+        center_x = sil_x + (sil_draw_w - left_text_w) / 2
+        tx = max(x_left, center_x)  # clamp to not go past left panel edge
 
         # Ship name
         if self._ship_name:
