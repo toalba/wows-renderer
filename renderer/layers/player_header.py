@@ -39,7 +39,7 @@ class PlayerHeaderLayer(Layer):
     """
 
     PADDING = 8
-    Y_START = 6       # offset from hud_height (at 760px reference)
+    Y_START = 0       # offset from hud_height (at 760px reference)
     SIL_HEIGHT = 48   # silhouette display height — big, spans panel width
     NAME_FONT_SIZE = 10
     CLAN_FONT_SIZE = 9
@@ -122,7 +122,7 @@ class PlayerHeaderLayer(Layer):
         pad = self.PADDING * s
         panel_x = config.left_panel + config.minimap_size
         x_left = panel_x + pad
-        y_top = config.hud_height + self.Y_START * s
+        y_top = self.Y_START * s
         max_w = config.right_panel - 2 * pad
 
         sil_h = self.SIL_HEIGHT * s
