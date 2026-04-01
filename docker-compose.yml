@@ -1,0 +1,11 @@
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      ssh:
+        - default
+    env_file: .env
+    restart: unless-stopped
+    volumes:
+      - ./wows-gamedata:/app/wows-gamedata:ro
