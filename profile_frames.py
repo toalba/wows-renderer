@@ -64,7 +64,7 @@ adapter = GameStateAdapter.from_replay(
 )
 gp = Path(config.gamedata_path)
 ship_db = load_ships_db(gp)
-ship_icons = load_ship_icons(gp)
+ship_icons = load_ship_icons(gp, config.team_colors, config.self_color)
 
 render_ctx = RenderContext(
     config=config,

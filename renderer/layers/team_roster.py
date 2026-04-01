@@ -61,6 +61,14 @@ class TeamRosterLayer(Layer):
                 except Exception:
                     pass
 
+        # Load frags (kills) icon
+        frags_path = ctx.config.gamedata_path / "gui" / "fla" / "battle_loading" / "frags.png"
+        if frags_path.exists():
+            try:
+                self._stat_icons["frags"] = cairo.ImageSurface.create_from_png(str(frags_path))
+            except Exception:
+                pass
+
         # Load consumable icons (same logic as ConsumableLayer)
         from renderer.assets import load_consumable_icons
         all_icons = load_consumable_icons(ctx.config.gamedata_path)
@@ -323,9 +331,13 @@ class TeamRosterLayer(Layer):
                 iw, ih = icon_surf.get_width(), icon_surf.get_height()
                 scale = icon_size / max(iw, ih)
                 cr.save()
-                cr.translate(self.PAD_X, y + row_h / 2 - icon_size / 2)
+                # SVG icons point up (north); rotate 90° CW for horizontal display
+                cx = self.PAD_X + icon_size / 2
+                cy = y + row_h / 2
+                cr.translate(cx, cy)
+                cr.rotate(math.pi / 2)
                 cr.scale(scale, scale)
-                cr.set_source_surface(icon_surf, 0, 0)
+                cr.set_source_surface(icon_surf, -iw / 2, -ih / 2)
                 cr.paint_with_alpha(alpha)
                 cr.restore()
 
@@ -336,14 +348,27 @@ class TeamRosterLayer(Layer):
         # --- Line 1: player name (left) | kills (right) ---
         cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         cr.set_font_size(self.STAT_FONT_SIZE)
-        kills_text = f"✕{kills}"
-        kills_ext = cr.text_extents(kills_text)
-        cr.set_source_rgba(*(  (tr, tg, tb, alpha) if kills > 0 else (0.45, 0.45, 0.45, alpha)  ))
-        cr.move_to(stat_x - kills_ext.width, line1_y)
-        cr.show_text(kills_text)
+        if kills > 0:
+            kills_text = str(kills)
+            kills_ext = cr.text_extents(kills_text)
+            kills_block_x = stat_x - kills_ext.width
+            frags_icon = self._stat_icons.get("frags")
+            if frags_icon:
+                fiw, fih = frags_icon.get_width(), frags_icon.get_height()
+                fscale = stat_icon_size / max(fiw, fih)
+                cr.save()
+                cr.translate(kills_block_x - stat_icon_size - 2, line1_y - stat_icon_size + 1)
+                cr.scale(fscale, fscale)
+                cr.set_source_surface(frags_icon, 0, 0)
+                cr.paint_with_alpha(alpha * 0.85)
+                cr.restore()
+            cr.set_source_rgba(tr, tg, tb, alpha)
+            cr.move_to(kills_block_x, line1_y)
+            cr.show_text(kills_text)
 
         name = player.name or "?"
-        max_name_w = stat_x - kills_ext.width - 6 - text_x
+        kills_w = (cr.text_extents(str(kills)).width + stat_icon_size + 4) if kills > 0 else 0
+        max_name_w = stat_x - kills_w - 6 - text_x
         truncated_name = _truncate(cr, name, max_name_w, self.NAME_FONT_SIZE)
         self.draw_cached_text(cr, text_x, line1_y, truncated_name, tr, tg, tb,
                               alpha=alpha, font_size=self.NAME_FONT_SIZE, bold=True)

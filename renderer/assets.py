@@ -131,19 +131,99 @@ _SPECIES_ICON_MAP: dict[str, str] = {
 }
 
 
+def _svg_to_surface(svg_text: str, target_height: int = 18) -> cairo.ImageSurface:
+    """Rasterize an SVG string to a cairo surface at a fixed output height."""
+    import cairosvg
+    import io
+    import re
+
+    # Parse original viewport for aspect ratio
+    w_match = re.search(r'width="(\d+)"', svg_text)
+    h_match = re.search(r'height="(\d+)"', svg_text)
+    svg_w = int(w_match.group(1)) if w_match else 9
+    svg_h = int(h_match.group(1)) if h_match else 16
+
+    out_h = target_height
+    out_w = round(svg_w / svg_h * out_h)
+
+    png_data = cairosvg.svg2png(
+        bytestring=svg_text.encode("utf-8"),
+        output_width=out_w,
+        output_height=out_h,
+    )
+    return cairo.ImageSurface.create_from_png(io.BytesIO(png_data))
+
+
+def _rgba_to_hex(r: float, g: float, b: float) -> str:
+    """Convert 0-1 float RGB to hex color string."""
+    return f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+
+
 def load_ship_icons(
     gamedata_path: Path,
+    team_colors: dict[int, tuple[float, float, float, float]] | None = None,
+    self_color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
 ) -> dict[str, dict[str, cairo.ImageSurface]]:
-    """Load ship class icons for ally/enemy/white variants.
+    """Load ship class icons from SVG minimap assets, tinted per team.
+
+    Uses vector SVGs from gui/fla/minimap/ship_icons/ for sharp rendering
+    at any resolution. The white fill in each SVG is replaced with the
+    appropriate team color before rasterization.
 
     Returns:
-        {species_lower: {"ally": surface, "enemy": surface, "white": surface}}
+        {species_lower: {"ally": surface, "enemy": surface, "white": surface, "sunk": surface}}
     """
-    icon_dir = gamedata_path / "gui" / "battle_hud" / "markers" / "ship"
+    if team_colors is None:
+        team_colors = {
+            0: (0.36, 0.90, 0.51, 1.0),
+            1: (1.00, 0.42, 0.42, 1.0),
+        }
+    ally_hex = _rgba_to_hex(*team_colors[0][:3])
+    enemy_hex = _rgba_to_hex(*team_colors[1][:3])
+    self_hex = _rgba_to_hex(*self_color[:3])
+
+    svg_dir = gamedata_path / "gui" / "fla" / "minimap" / "ship_icons"
     icons: dict[str, dict[str, cairo.ImageSurface]] = {}
 
+    # Mapping: variant key → (svg filename pattern, fill color hex)
+    variant_map = {
+        "ally":  ("minimap_{base}.svg", ally_hex),
+        "enemy": ("minimap_{base}.svg", enemy_hex),
+        "white": ("minimap_{base}.svg", self_hex),
+        "sunk":  ("minimap_{base}_dead.svg", None),  # keep original colors
+    }
+
     for species, base in _SPECIES_ICON_MAP.items():
-        key = base  # e.g. "destroyer"
+        key = base
+        icons[key] = {}
+        for variant, (pattern, color_hex) in variant_map.items():
+            svg_path = svg_dir / pattern.format(base=base)
+            if not svg_path.exists():
+                continue
+            try:
+                svg_text = svg_path.read_text()
+                if color_hex:
+                    svg_text = svg_text.replace('fill="white"', f'fill="{color_hex}"')
+                icons[key][variant] = _svg_to_surface(svg_text)
+            except Exception as e:
+                log.debug("Failed to load SVG icon %s: %s", svg_path, e)
+
+    # Fallback: try PNG icons if SVG dir doesn't exist
+    if not icons or not any(icons.values()):
+        log.info("SVG icons not found, falling back to PNG icons")
+        return _load_ship_icons_png(gamedata_path)
+
+    return icons
+
+
+def _load_ship_icons_png(
+    gamedata_path: Path,
+) -> dict[str, dict[str, cairo.ImageSurface]]:
+    """Fallback: load ship class icons from PNG files."""
+    icon_dir = gamedata_path / "gui" / "battle_hud" / "markers" / "ship"
+    icons: dict[str, dict[str, cairo.ImageSurface]] = {}
+    for species, base in _SPECIES_ICON_MAP.items():
+        key = base
         icons[key] = {}
         variants = {
             "ally": f"icon_ally_{base}.png",

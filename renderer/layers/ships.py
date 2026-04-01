@@ -218,7 +218,7 @@ class ShipLayer(Layer):
 
         cr.save()
         cr.translate(px, py)
-        cr.rotate(yaw - math.pi / 2)
+        cr.rotate(yaw)
         cr.scale(scale, scale)
         # Draw the icon shifted in 8 directions to create an outline glow
         off = offset / scale  # offset in icon-space pixels
@@ -263,9 +263,8 @@ class ShipLayer(Layer):
         cr.save()
         cr.translate(px, py)
         # Ship heading: 0=north, positive=CW (compass convention).
-        # Cairo: positive rotation = CW. Icon default = pointing RIGHT (east).
-        # Offset by -π/2 to align icon "east" with heading "north".
-        cr.rotate(yaw - math.pi / 2)
+        # Cairo: positive rotation = CW. SVG icons point UP (north).
+        cr.rotate(yaw)
         cr.scale(scale, scale)
         cr.set_source_surface(surface, -w / 2, -h / 2)
 

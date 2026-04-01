@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 dependencies = [
     "wows-replay-parser",
     "pycairo>=1.26",
+    "cairosvg>=2.7",
     "discord.py>=2.3",
     "click>=8.0",
     "rich>=13.0",
