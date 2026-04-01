@@ -107,10 +107,13 @@ class CapturePointLayer(Layer):
             cr.set_line_width(2.0)
             cr.stroke()
 
-            # Progress arc (if being captured)
+            # Progress arc (if being captured by the opposing team)
             # Skip during pre-battle (battleStage != 0) — initial state can be stale
+            # Skip when invader == owner (own team inside their pre-owned zone)
             battle_active = state.battle.battle_stage == 0
-            if battle_active and cap and cap.progress > 0.01 and cap.has_invaders:
+            being_captured = (cap and cap.progress > 0.01 and cap.has_invaders
+                              and cap.invader_team != cap.team_id)
+            if battle_active and being_captured:
                 inv_r, inv_g, inv_b = self.NEUTRAL_COLOR
                 if cap.invader_team >= 0:
                     inv_display = self.ctx.raw_to_display_team(cap.invader_team)
