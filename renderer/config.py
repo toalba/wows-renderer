@@ -34,6 +34,26 @@ class RenderConfig:
 
     hud_height: int = 24  # score bar above minimap
 
+    def __post_init__(self) -> None:
+        if self.minimap_size <= 0:
+            raise ValueError(f"minimap_size must be > 0, got {self.minimap_size}")
+        if self.panel_width < 0:
+            raise ValueError(f"panel_width must be >= 0, got {self.panel_width}")
+        if self.fps <= 0:
+            raise ValueError(f"fps must be > 0, got {self.fps}")
+        if self.speed <= 0:
+            raise ValueError(f"speed must be > 0, got {self.speed}")
+        if not (0 <= self.crf <= 51):
+            raise ValueError(f"crf must be 0-51, got {self.crf}")
+        if self.start_time < 0:
+            raise ValueError(f"start_time must be >= 0, got {self.start_time}")
+        if self.end_time is not None and self.end_time < 0:
+            raise ValueError(f"end_time must be >= 0, got {self.end_time}")
+        if self.trail_length < 0:
+            raise ValueError(f"trail_length must be >= 0, got {self.trail_length}")
+        if not isinstance(self.gamedata_path, Path):
+            self.gamedata_path = Path(self.gamedata_path)
+
     @property
     def left_panel(self) -> int:
         return self.left_panel_width if self.left_panel_width is not None else self.panel_width
