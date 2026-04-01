@@ -80,39 +80,43 @@ class TeamRosterLayer(Layer):
                     self._cons_icons[type_id] = all_icons[icon_name]
                     break
 
-        # Build per-entity base reload lookup from ship_consumables.json
-        # cons_id → base reload seconds (for fallback on last use)
-        from renderer.assets import load_ship_consumables
-        ship_consumables = load_ship_consumables(ctx.config.gamedata_path)
+        # Build per-entity effective reload lookup using full modifier stack
+        # (modernizations + November Foxtrot + captain skills)
+        from wows_replay_parser.consumable_calc import compute_effective_reloads, SPECIES_INDEX
+        ship_db = ctx.ship_db or {}
+        tracker = getattr(ctx.replay, "_tracker", None)
+
         self._entity_reload: dict[int, dict[int, float]] = {}  # entity_id → {cons_id: reload_s}
         for entity_id, player in ctx.player_lookup.items():
-            if not player.ship_id:
+            if not player.ship_id or not player.ship_config:
                 continue
-            cons = ship_consumables.get(player.ship_id, {})
-            timings = cons.get("timings", {})
-            if not timings:
-                continue
-            # Flatten all slot categories (slots is now list[list[str]])
-            slots = cons.get("slots", [])
-            all_categories: set[str] = set()
-            for slot in slots:
-                if isinstance(slot, list):
-                    all_categories.update(slot)
-                elif isinstance(slot, str):
-                    all_categories.add(slot)
+            species = ship_db.get(player.ship_id, {}).get("species", "")
+            species_idx = SPECIES_INDEX.get(species, -1)
 
-            reloads: dict[int, float] = {}
-            for type_id, type_name in CONSUMABLE_TYPE_ID_MAP.items():
-                category = CONSUMABLE_TYPE_TO_CATEGORY.get(type_name)
-                if category and category in timings:
-                    reloads[type_id] = timings[category]
+            # Get learned skills from crewModifiersCompactParams
+            learned: list[int] = []
+            if tracker and species_idx >= 0:
+                crew_props = tracker._current.get(entity_id, {}).get("crewModifiersCompactParams")
+                if crew_props:
+                    ls = getattr(crew_props, "learnedSkills", None)
+                    if ls and species_idx < len(ls):
+                        learned = list(ls[species_idx])
+
+            reloads = compute_effective_reloads(
+                ship_id=player.ship_id,
+                ship_species=species,
+                modernization_ids=player.ship_config.modernizations,
+                exterior_ids=player.ship_config.exteriors,
+                learned_skill_ids=learned,
+                crew_id=player.crew_id,
+                gamedata_path=ctx.config.gamedata_path,
+            )
             if reloads:
                 self._entity_reload[entity_id] = reloads
 
         # Build per-entity consumable timeline with cooldowns.
         # For consecutive uses: cooldown_end = next activation time.
-        # For last use: cooldown_end = active_end + base reload from GameParams.
-        tracker = getattr(ctx.replay, "_tracker", None)
+        # For last use: cooldown_end = active_end + effective reload.
         raw_activations = getattr(tracker, "_consumable_activations", {}) if tracker else {}
 
         self._cons_timeline: dict[int, list[tuple[float, int, float, float]]] = {}
@@ -144,7 +148,6 @@ class TeamRosterLayer(Layer):
                     timeline.append((activated_at, cons_id, active_end, cooldown_end))
             self._cons_timeline[entity_id] = sorted(timeline, key=lambda x: x[0])
 
-        ship_db = ctx.ship_db or {}
         self._entity_species: dict[int, str] = {}
         self._entity_ship_name: dict[int, str] = {}
 
