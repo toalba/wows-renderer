@@ -77,7 +77,7 @@ class RenderCog(commands.Cog):
         try:
             # Download replay
             await replay.save(replay_path)
-            await interaction.edit_original_response(content="Rendering... 0%")
+            await interaction.edit_original_response(content="Parsing replay...")
             t_start = time.monotonic()
 
             # Dispatch to process pool
@@ -103,7 +103,7 @@ class RenderCog(commands.Cog):
             # Poll progress with timeout
             current = 0
             total = 1
-            last_pct = -1
+            last_msg = "Parsing replay..."
             deadline = asyncio.get_event_loop().time() + self.config.render_timeout
             while not future.done():
                 remaining = deadline - asyncio.get_event_loop().time()
@@ -112,15 +112,21 @@ class RenderCog(commands.Cog):
                     raise asyncio.TimeoutError
                 await asyncio.sleep(min(2, remaining))
                 # Drain queue
+                new_msg = last_msg
                 while not progress_queue.empty():
                     try:
-                        current, total = progress_queue.get_nowait()
+                        msg = progress_queue.get_nowait()
                     except queue.Empty:
                         break
-                pct = int(current / total * 100) if total else 0
-                if pct != last_pct:
-                    last_pct = pct
-                    await interaction.edit_original_response(content=f"Rendering... {pct}%")
+                    if isinstance(msg, tuple) and msg[0] == "status":
+                        new_msg = msg[1]
+                    else:
+                        current, total = msg
+                        pct = int(current / total * 100) if total else 0
+                        new_msg = f"Rendering... {pct}%"
+                if new_msg != last_msg:
+                    last_msg = new_msg
+                    await interaction.edit_original_response(content=new_msg)
 
             # Collect result (raises if worker crashed)
             _, replay_duration = await future

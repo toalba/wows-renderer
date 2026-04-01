@@ -50,7 +50,11 @@ def render_replay(
     from wows_replay_parser import parse_replay
 
     gd = Path(gamedata_path)
+    if progress_queue:
+        progress_queue.put(("status", "Parsing replay..."))
     replay = parse_replay(replay_path, str(gd / "scripts_entity" / "entity_defs"))
+    if progress_queue:
+        progress_queue.put(("status", "Rendering... 0%"))
 
     # Adjust panel widths per preset
     left_pw: int | None = None
