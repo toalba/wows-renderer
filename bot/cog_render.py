@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import queue
 import shutil
 import tempfile
 import time
@@ -16,7 +17,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.config import BotConfig
-from bot.worker import PRESETS, render_replay
+from bot.worker import render_replay
 
 log = logging.getLogger(__name__)
 
@@ -69,7 +70,8 @@ class RenderCog(commands.Cog):
 
         # Temp files
         tmp_dir = tempfile.mkdtemp(prefix="wows_render_")
-        replay_path = Path(tmp_dir) / replay.filename
+        safe_name = Path(replay.filename).name  # strip directory traversal
+        replay_path = Path(tmp_dir) / safe_name
         output_path = Path(tmp_dir) / "minimap.mp4"
 
         try:
@@ -113,7 +115,7 @@ class RenderCog(commands.Cog):
                 while not progress_queue.empty():
                     try:
                         current, total = progress_queue.get_nowait()
-                    except Exception:
+                    except queue.Empty:
                         break
                 pct = int(current / total * 100) if total else 0
                 if pct != last_pct:

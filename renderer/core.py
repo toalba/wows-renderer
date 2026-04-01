@@ -115,8 +115,7 @@ class MinimapRenderer:
         )
 
         # Load ship database and icons
-        from pathlib import Path as _Path
-        gp = _Path(config.gamedata_path)
+        gp = Path(config.gamedata_path)
         ship_db = load_ships_db(gp)
         ship_icons = load_ship_icons(gp)
 
@@ -142,12 +141,10 @@ class MinimapRenderer:
         end = config.end_time if config.end_time is not None else replay.duration
         dt = config.speed / config.fps  # game-seconds per frame
 
-        timestamps = []
-        t = start
-        while t <= end:
-            timestamps.append(t)
-            t += dt
-        total_frames = len(timestamps)
+        # Use index-based computation to avoid float accumulation drift
+        import math
+        total_frames = int(math.floor((end - start) / dt)) + 1
+        timestamps = [start + i * dt for i in range(total_frames)]
 
         # Create reusable cairo surface
         width = config.total_width

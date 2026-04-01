@@ -252,7 +252,8 @@ class TeamRosterLayer(Layer):
                 damage = self._damage.get(eid, 0)
                 cons_status = self._get_cons_status(eid, timestamp)
                 y = self._draw_row(cr, y, panel_w, row_h, eid, is_alive, hp_frac,
-                                   tr, tg, tb, kills, damage, cons_status)
+                                   tr, tg, tb, kills, damage, cons_status,
+                                   display_team=display_team)
 
     def _get_cons_status(self, entity_id: int, timestamp: float) -> list[tuple[int, str, float]]:
         """Return list of (cons_id, state, seconds) for consumables relevant right now.
@@ -293,7 +294,8 @@ class TeamRosterLayer(Layer):
         return y + h
 
     def _draw_row(self, cr, y, panel_w, row_h, entity_id,
-                  is_alive, hp_frac, tr, tg, tb, kills, damage, cons_status) -> float:
+                  is_alive, hp_frac, tr, tg, tb, kills, damage, cons_status,
+                  *, display_team: int = 0) -> float:
         player = self.ctx.player_lookup.get(entity_id)
         if not player:
             return y + row_h
@@ -312,9 +314,7 @@ class TeamRosterLayer(Layer):
         icon_key = self._entity_species.get(entity_id)
         icons = self.ctx.ship_icons or {}
         if icon_key and icon_key in icons:
-            relation_key = "ally" if (tr < tg) else "enemy"
-            if player.relation == 0:
-                relation_key = "ally"
+            relation_key = "ally" if display_team == 0 else "enemy"
             if not is_alive:
                 relation_key = "sunk"
             icon_surf = icons[icon_key].get(relation_key)

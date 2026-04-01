@@ -227,15 +227,3 @@ class DamageStatsLayer(Layer):
 
         # Expose bottom y so ribbons can position below
         self.panel_bottom = y
-
-    @staticmethod
-    def _rounded_rect(
-        cr: cairo.Context, x: float, y: float, w: float, h: float, r: float,
-    ) -> None:
-        import math
-        cr.new_sub_path()
-        cr.arc(x + w - r, y + r, r, -math.pi / 2, 0)
-        cr.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
-        cr.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
-        cr.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
-        cr.close_path()

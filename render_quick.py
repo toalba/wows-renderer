@@ -5,7 +5,6 @@ from renderer.config import RenderConfig
 from renderer.core import MinimapRenderer
 from renderer.layers.map_bg import MapBackgroundLayer
 from renderer.layers.ships import ShipLayer
-from renderer.layers.trails import TrailLayer
 from renderer.layers.hud import HudLayer
 from renderer.layers.projectiles import ProjectileLayer
 from renderer.layers.capture_points import CapturePointLayer
