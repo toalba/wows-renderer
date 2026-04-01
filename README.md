@@ -8,17 +8,21 @@ Built for the Wargaming community bounty (KOTS referee tooling).
 
 ## Features
 
-- Layer-based rendering pipeline with 8 composable visual layers
+- **13 composable rendering layers** — map background, team rosters, capture points, smoke, projectiles, aircraft, ships, health bars, consumables, ribbons, killfeed, HUD, trails
 - Ship positions with rotated class icons (destroyer, cruiser, battleship, carrier, submarine)
 - Team-colored ships (green = ally, red = enemy, white = self) with player names
-- Shell traces and torpedo tracks from shot events
+- Shell traces colored by ammo type (AP/HE/SAP) + torpedo tracks
 - Capture zone circles with progress bars and team ownership
-- Per-ship health bars
-- Smoke screen visualization
-- Consumable radius indicators
-- HUD overlay with team scores, timer, and ship counts
+- Per-ship health bars with repair party recoverable HP
+- Smoke screen, consumable radius indicators (radar/hydro circles)
+- Aircraft layer (CV squadrons + airstrikes)
+- HUD overlay with team scores, timer, TTW pills, 1-kill-swing indicator, match result
+- Team roster side panels with kills, damage, HP, consumable timers
+- Kill feed + ribbon counters
 - Configurable speed, resolution, FPS, time range, and quality
-- Direct FFmpeg pipe (no temp frames on disk)
+- Direct FFmpeg pipe with async frame writer (~12ms/frame)
+- **Discord bot** — `/render` slash command with progress reporting
+- **Docker support** — multi-stage build with all dependencies
 
 ---
 
@@ -220,15 +224,19 @@ Layers are composited bottom-to-top. Each layer is independent and optional.
 
 | Layer | Description |
 |---|---|
-| `MapBackgroundLayer` | Minimap PNG background image |
-| `CapturePointLayer` | Capture zone circles + progress bars + team ownership |
+| `MapBackgroundLayer` | Water texture + minimap PNG + grid (pre-rendered static cache) |
+| `TeamRosterLayer` | Left panel: both teams with names, kills, damage, HP bars, consumable timers |
+| `CapturePointLayer` | Cap circles with progress arcs, team colors, contested indicators |
 | `SmokeLayer` | Smoke screen radius visualization |
-| `ProjectileLayer` | Shell traces + torpedo tracks |
+| `ProjectileLayer` | Shell traces (AP/HE/SAP colored) + torpedo tracks |
+| `AircraftLayer` | CV squadrons + airstrike icons |
 | `ShipLayer` | Rotated ship class icons, player names, team colors |
 | `TrailLayer` | Fading ship movement trails |
-| `HealthBarLayer` | Per-ship HP bars above ship icons |
-| `ConsumableLayer` | Consumable effect radius indicators |
-| `HudLayer` | Score bar, match timer, ship counts |
+| `HealthBarLayer` | Per-ship HP bars + repair party recoverable HP |
+| `ConsumableLayer` | Consumable icons + radar/hydro detection radius circles |
+| `RibbonLayer` | Recording player ribbon counters (grouped, accumulating) |
+| `KillfeedLayer` | Recent kills with frag icons, bottom-anchored |
+| `HudLayer` | Score bar, timer, TTW pills, 1-kill-swing indicator, match result |
 
 ### Adding a custom layer
 
@@ -247,6 +255,55 @@ class MyLayer(Layer):
         # Use ctx.world_to_pixel(x, z) for coordinate mapping
         ...
 ```
+
+---
+
+## Discord Bot
+
+The bot provides a `/render` slash command that accepts a `.wowsreplay` file and returns the rendered minimap video.
+
+### Setup
+
+1. Create a `.env` file in the project root:
+   ```
+   DISCORD_TOKEN=your_bot_token_here
+   ```
+
+2. Run the bot:
+   ```bash
+   python -m bot.main
+   # or: wows-bot
+   ```
+
+### Configuration
+
+All config is via environment variables (or `.env` file):
+
+| Variable | Default | Description |
+|---|---|---|
+| `DISCORD_TOKEN` | (required) | Bot token |
+| `GAMEDATA_PATH` | `wows-gamedata/data` | Path to game assets |
+| `MAX_WORKERS` | `2` | Concurrent render processes |
+| `RENDER_TIMEOUT` | `120` | Max seconds per render |
+| `COOLDOWN_SECONDS` | `60` | Per-user rate limit |
+| `MAX_UPLOAD_MB` | `50` | Max replay file size |
+
+The bot renders replays in a `ProcessPoolExecutor` (separate processes for CPU-bound cairo work), reports progress to Discord in real-time, and includes match duration + render time in the response.
+
+---
+
+## Docker
+
+```bash
+# Build (needs SSH agent for private git deps)
+eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_rsa
+DOCKER_BUILDKIT=1 docker build --ssh default -t wows-renderer .
+
+# Run
+docker run --env-file .env wows-renderer
+```
+
+The image is a multi-stage build: builder stage installs dependencies with SSH forwarding, runtime stage is `python:3.12-slim` with `ffmpeg` and `libcairo2`.
 
 ---
 

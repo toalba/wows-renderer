@@ -8,10 +8,12 @@ dependencies = [
     "discord.py>=2.3",
     "click>=8.0",
     "rich>=13.0",
+    "python-dotenv>=1.0",
 ]
 
 [project.scripts]
 wows-render = "renderer.cli:main"
+wows-bot = "bot.main:main"
 
 [tool.uv.sources]
 wows-replay-parser = { git = "ssh://git@github.com/toalba/wows-replay-parser.git" }

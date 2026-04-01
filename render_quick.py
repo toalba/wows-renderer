@@ -12,8 +12,9 @@ from renderer.layers.capture_points import CapturePointLayer
 from renderer.layers.health_bars import HealthBarLayer
 from renderer.layers.consumables import ConsumableLayer
 from renderer.layers.smoke import SmokeLayer
-from renderer.layers.killfeed import KillfeedLayer
+from renderer.layers.aircraft import AircraftLayer
 from renderer.layers.team_roster import TeamRosterLayer
+from renderer.layers.right_panel import RightPanelLayer
 from wows_replay_parser import parse_replay
 
 REPLAY = sys.argv[1] if len(sys.argv) > 1 else "20260322_225740_PBSD598-Black-Cossack_15_NE_north.wowsreplay"
@@ -26,7 +27,7 @@ print(f"Parsed: {replay.map_name}, {replay.duration:.0f}s, {len(replay.players)}
 config = RenderConfig(gamedata_path=GAMEDATA, speed=20.0, fps=20, minimap_size=1080, panel_width=420)
 renderer = MinimapRenderer(config)
 for L in [MapBackgroundLayer(), TeamRosterLayer(), CapturePointLayer(), SmokeLayer(), ProjectileLayer(),
-          ShipLayer(), HealthBarLayer(), ConsumableLayer(), KillfeedLayer(), HudLayer()]:
+          AircraftLayer(), ShipLayer(), HealthBarLayer(), ConsumableLayer(), RightPanelLayer(), HudLayer()]:
     renderer.add_layer(L)
 
 t0 = time.time()
@@ -34,4 +35,3 @@ renderer.render(replay, Path(OUTPUT),
     progress_callback=lambda c, t: print(f"  {c}/{t}") if c % 200 == 0 or c == t else None)
 sz = Path(OUTPUT).stat().st_size
 print(f"Done: {time.time()-t0:.1f}s, {sz/1024/1024:.2f} MB → {OUTPUT}")
-
