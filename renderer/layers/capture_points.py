@@ -110,8 +110,11 @@ class CapturePointLayer(Layer):
             # Progress arc (if being captured by the opposing team)
             # Skip during pre-battle (battleStage != 0) — initial state can be stale
             # Skip when invader == owner (own team inside their pre-owned zone)
+            # Require is_enabled — server sets this when caps become active,
+            # avoids stale initial componentsState values showing at battle start.
             battle_active = state.battle.battle_stage == 0
-            being_captured = (cap and cap.progress > 0.01 and cap.has_invaders
+            cap_active = cap and cap.is_enabled
+            being_captured = (cap_active and cap.progress > 0.01 and cap.has_invaders
                               and cap.invader_team != cap.team_id)
             if battle_active and being_captured:
                 inv_r, inv_g, inv_b = self.NEUTRAL_COLOR
@@ -141,7 +144,7 @@ class CapturePointLayer(Layer):
                     cr.fill()
 
             # Contested indicator (both teams inside)
-            if cap and cap.both_inside:
+            if cap_active and cap.both_inside:
                 cr.new_sub_path()
                 cr.arc(px, py, radius + 3, 0, 2 * math.pi)
                 yr, yg, yb = self.CONTESTED_COLOR
