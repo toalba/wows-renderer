@@ -309,15 +309,29 @@ The `/render` command supports three presets:
 ## Docker
 
 ```bash
-# Build (needs SSH agent for private git deps)
-eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_rsa
-DOCKER_BUILDKIT=1 docker build --ssh default -t wows-renderer .
+# Make sure submodules are initialized
+git submodule update --init --recursive
 
-# Run
-docker run --env-file .env wows-renderer
+# Create .env with at minimum:
+#   DISCORD_TOKEN=your_bot_token_here
+
+# Build and run with docker compose
+docker compose build
+docker compose up -d
+
+# View logs
+docker compose logs -f
 ```
 
-The image is a multi-stage build: builder stage installs dependencies with SSH forwarding, runtime stage is `python:3.12-slim` with `ffmpeg` and `libcairo2`.
+Or build manually:
+
+```bash
+eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_rsa
+DOCKER_BUILDKIT=1 docker build --ssh default -t wows-renderer .
+docker run --env-file .env -v ./wows-gamedata:/app/wows-gamedata:ro wows-renderer
+```
+
+The image is a multi-stage build: builder stage installs dependencies with SSH forwarding, runtime stage is `python:3.12-slim` with `ffmpeg` and `libcairo2`. The `wows-gamedata` submodule is mounted as a volume so you can update game assets without rebuilding.
 
 ---
 
