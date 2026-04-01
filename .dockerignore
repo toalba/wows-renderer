@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.git/
+.env
+*.mp4
+*.wowsreplay
+*.tmp
+.mypy_cache/
+.ruff_cache/
+.idea/
+.vscode/
+GameParams-*.json
+split/
