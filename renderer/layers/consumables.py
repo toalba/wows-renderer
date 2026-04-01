@@ -117,7 +117,7 @@ class ConsumableLayer(Layer):
                 if range_meters <= 0:
                     continue
                 self._draw_range_circle(
-                    cr, px, py, range_meters, type_name,
+                    cr, px, py, range_meters, type_name, relation,
                 )
 
             # Draw icon row
@@ -136,7 +136,7 @@ class ConsumableLayer(Layer):
 
     def _draw_range_circle(
         self, cr: cairo.Context, px: float, py: float,
-        range_meters: float, type_name: str,
+        range_meters: float, type_name: str, relation: int = 2,
     ) -> None:
         """Draw a detection radius circle centered on the ship."""
         # range_meters is in game meters. Convert to pixels:
@@ -145,7 +145,11 @@ class ConsumableLayer(Layer):
         mm = self.ctx.config.minimap_size
         radius_px = range_meters / 30.0 / map_size * mm
 
-        r, g, b = _CIRCLE_COLORS.get(type_name, (0.5, 0.5, 0.5))
+        # Team-colored: ally/self = blue, enemy = red
+        if relation <= 1:  # self or ally
+            r, g, b = (0.2, 0.5, 1.0)
+        else:
+            r, g, b = (1.0, 0.25, 0.25)
 
         is_radar = type_name == "rls"
 

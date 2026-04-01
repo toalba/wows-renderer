@@ -8,7 +8,7 @@ from renderer.assets import load_ship_icons, load_ships_db
 from renderer.config import RenderConfig
 from renderer.layers.base import Layer, RenderContext
 from renderer.game_state import GameStateAdapter
-from renderer.video import FFmpegPipe
+from renderer.video import FFmpegPipe, FrameWriter
 
 if TYPE_CHECKING:
     from wows_replay_parser.api import ParsedReplay
@@ -155,8 +155,10 @@ class MinimapRenderer:
         surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
         cr = cairo.Context(surface)
 
-        # Open ffmpeg pipe
+        # Open ffmpeg pipe with async frame writer
         with FFmpegPipe(output_path, width, height, config.fps, config.crf, config.codec) as pipe:
+            writer = FrameWriter(pipe)
+
             # Use iter_states for O(delta) incremental state queries
             # instead of state_at() which is O(history) per frame.
             state_iter = replay.iter_states(timestamps)
@@ -174,12 +176,14 @@ class MinimapRenderer:
                     layer.render(cr, state, t)
                     cr.restore()
 
-                # 3. Write frame directly from surface buffer (no copy)
+                # 3. Copy frame data and write async (pipe I/O in background thread)
                 surface.flush()
-                pipe.write_frame(surface.get_data())
+                writer.write_frame(surface.get_data())
 
                 # 4. Progress
                 if progress_callback:
                     progress_callback(frame_idx + 1, total_frames)
+
+            writer.finish()
 
         return output_path

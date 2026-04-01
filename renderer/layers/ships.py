@@ -31,7 +31,7 @@ class ShipLayer(Layer):
     DETECTED_ALPHA = 1.0
     UNDETECTED_ALPHA = 0.4
     NAME_OFFSET_Y = -14  # Pixels above ship center (at 760px)
-    NAME_FONT_SIZE = 11.0  # At 760px reference (scaled for Warhelios)
+    NAME_FONT_SIZE = 10.5  # At 760px reference (scaled for Warhelios)
     # Off-white for primary labels (easier on the eyes than pure white)
     LABEL_COLOR = (0.91, 0.89, 0.85)  # #E8E4D9
 
@@ -137,25 +137,24 @@ class ShipLayer(Layer):
         name: str, color: tuple[float, float, float, float],
         alpha_mult: float = 1.0,
     ) -> None:
-        """Draw player name above the ship with dark halo."""
+        """Draw player name above the ship using cached text surface."""
         if not name:
             return
-        cr.save()
         s = self.ctx.scale
         font_size = self.NAME_FONT_SIZE * s
-        cr.select_font_face(_font_for_text(name), cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        cr.set_font_size(font_size)
-        extents = cr.text_extents(name)
-        tx = px - extents.width / 2
-        ty = py + self.NAME_OFFSET_Y * s
-
         r, g, b, a = color
-        self.draw_text_halo(
+
+        surf, text_w, text_h = self.get_cached_text(cr, name, font_size, True, r, g, b)
+        if surf.get_width() <= 1:
+            return
+
+        tx = px - text_w / 2
+        ty = py + self.NAME_OFFSET_Y * s
+        self.draw_cached_text(
             cr, tx, ty, name,
             r, g, b, alpha=a * alpha_mult,
-            font_size=font_size, bold=True, outline_width=2.5 * s,
+            font_size=font_size, bold=True,
         )
-        cr.restore()
 
     def _draw_triangle(
         self, cr: cairo.Context, px: float, py: float, yaw: float,

@@ -1,6 +1,47 @@
 from __future__ import annotations
+import queue
 import subprocess
+import threading
 from pathlib import Path
+
+
+class FrameWriter:
+    """Async frame writer that offloads pipe I/O to a background thread.
+
+    The main thread calls write_frame() which copies the frame data and
+    enqueues it. A background thread drains the queue into ffmpeg's stdin,
+    so the main thread never blocks on pipe I/O.
+    """
+
+    def __init__(self, pipe: FFmpegPipe, maxsize: int = 8) -> None:
+        self._pipe = pipe
+        self._queue: queue.Queue[bytes | None] = queue.Queue(maxsize=maxsize)
+        self._error: Exception | None = None
+        self._thread = threading.Thread(target=self._writer_loop, daemon=True)
+        self._thread.start()
+
+    def _writer_loop(self) -> None:
+        try:
+            while True:
+                frame = self._queue.get()
+                if frame is None:
+                    break
+                self._pipe.write_frame(frame)
+        except Exception as e:
+            self._error = e
+
+    def write_frame(self, frame_data: bytes | memoryview) -> None:
+        """Copy frame data and enqueue for background writing."""
+        if self._error:
+            raise self._error
+        self._queue.put(bytes(frame_data))
+
+    def finish(self) -> None:
+        """Signal the writer thread to stop and wait for it."""
+        self._queue.put(None)
+        self._thread.join()
+        if self._error:
+            raise self._error
 
 
 class FFmpegPipe:
