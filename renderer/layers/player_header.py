@@ -239,8 +239,9 @@ class PlayerHeaderLayer(Layer):
         cr.set_source_rgb(hp_r, hp_g, hp_b)
         cr.move_to(tx, text_y)
         cr.show_text(hp_text)
+        tx += hp_ext.x_advance
 
-        # [CLAN] PlayerName (right-aligned)
+        # [CLAN] PlayerName (right-aligned, clamped to not overlap HP text)
         # Build full string to measure
         player_parts = []
         if self._clan_tag:
@@ -251,7 +252,7 @@ class PlayerHeaderLayer(Layer):
         cr.set_font_size(name_font)
         full_text = "".join(player_parts)
         full_ext = cr.text_extents(full_text)
-        px = x_right - full_ext.width
+        px = max(tx + 4 * s, x_right - full_ext.width)
 
         if self._clan_tag:
             cr.set_font_size(clan_font)
