@@ -84,28 +84,20 @@ class TeamRosterLayer(Layer):
             timings = cons.get("timings", {})
             if not timings:
                 continue
-            # Build slot index → timing: abilities and slots lists are parallel
-            abilities = cons.get("abilities", [])
+            # Flatten all slot categories (slots is now list[list[str]])
             slots = cons.get("slots", [])
-            slot_timings: dict[int, float] = {}  # slot index → reload
-            for idx, cat in enumerate(slots):
-                if cat in timings:
-                    slot_timings[idx] = timings[cat]
+            all_categories: set[str] = set()
+            for slot in slots:
+                if isinstance(slot, list):
+                    all_categories.update(slot)
+                elif isinstance(slot, str):
+                    all_categories.add(slot)
 
             reloads: dict[int, float] = {}
             for type_id, type_name in CONSUMABLE_TYPE_ID_MAP.items():
-                # Direct category match
                 category = CONSUMABLE_TYPE_TO_CATEGORY.get(type_name)
                 if category and category in timings:
                     reloads[type_id] = timings[category]
-                elif "unknown" in timings:
-                    # Fallback: if this type's icon matches an ability in the
-                    # 'unknown' slot, use the unknown timing
-                    icon_candidates = CONSUMABLE_TYPE_TO_ICONS.get(type_name, [])
-                    for idx, ability in enumerate(abilities):
-                        if ability in icon_candidates and idx < len(slots) and slots[idx] == "unknown":
-                            reloads[type_id] = timings["unknown"]
-                            break
             if reloads:
                 self._entity_reload[entity_id] = reloads
 
@@ -205,7 +197,7 @@ class TeamRosterLayer(Layer):
 
     def render(self, cr: cairo.Context, state: object, timestamp: float) -> None:
         config = self.ctx.config
-        panel_w = config.panel_width
+        panel_w = config.left_panel
         total_h = config.minimap_size
 
         # Accumulate kills

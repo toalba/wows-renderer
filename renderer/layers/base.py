@@ -153,7 +153,7 @@ class RenderContext:
         """
         scaling = self.config.minimap_size / self.map_size
         half_mm = self.config.minimap_size / 2.0
-        px = world_x * scaling + half_mm + self.config.panel_width
+        px = world_x * scaling + half_mm + self.config.left_panel
         py = -world_z * scaling + half_mm + self.config.hud_height
         return (px, py)
 

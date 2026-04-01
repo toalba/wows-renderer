@@ -21,7 +21,7 @@ class HudLayer(Layer):
 
     def render(self, cr: cairo.Context, state: object, timestamp: float) -> None:
         config = self.ctx.config
-        panel_w = config.panel_width
+        panel_w = config.left_panel
         mm_size = config.minimap_size
 
         # Load scoring config once from BattleState

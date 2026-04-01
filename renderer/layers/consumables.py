@@ -47,7 +47,7 @@ class ConsumableLayer(Layer):
     _entity_ranges: dict[int, dict[str, float]]
 
     def initialize(self, ctx: RenderContext) -> None:
-        super().initialize(ctx)
+        super(ConsumableLayer, self).initialize(ctx)
         from renderer.assets import load_consumable_icons, load_ship_consumables
         all_icons = load_consumable_icons(ctx.config.gamedata_path)
         ship_consumables = load_ship_consumables(ctx.config.gamedata_path)
@@ -70,11 +70,24 @@ class ConsumableLayer(Layer):
                 if ranges:
                     self._entity_ranges[entity_id] = ranges
 
-    def render(self, cr: cairo.Context, state: object, timestamp: float) -> None:
-        tracker = getattr(self.ctx.replay, "_tracker", None)
-        if tracker is None:
-            return
+        # Build activation index from ConsumableEvents
+        # entity_id → list of (timestamp, cons_type_id, duration)
+        self._activations: dict[int, list[tuple[float, int, float]]] = {}
+        for event in ctx.replay.events:
+            if type(event).__name__ != "ConsumableEvent":
+                continue
+            if not event.is_used:
+                continue
+            eid = event.entity_id
+            params = event.raw_data.get("consumableUsageParams", {})
+            cons_id = params.get("consumable_id", 0)
+            duration = event.work_time_left
+            if duration > 0:
+                self._activations.setdefault(eid, []).append(
+                    (event.timestamp, cons_id, duration)
+                )
 
+    def render(self, cr: cairo.Context, state: object, timestamp: float) -> None:
         for entity_id, ship in state.ships.items():
             if not ship.is_alive:
                 continue
@@ -90,7 +103,7 @@ class ConsumableLayer(Layer):
                     continue
 
             # Get active consumables
-            activations = getattr(tracker, "_consumable_activations", {}).get(entity_id, [])
+            activations = self._activations.get(entity_id, [])
             active_icons: list[cairo.ImageSurface] = []
             active_type_names: list[str] = []
             for activated_at, cons_id, duration in activations:

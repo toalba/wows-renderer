@@ -112,7 +112,7 @@ class KillfeedLayer(Layer):
 
         visible = visible[-self.MAX_VISIBLE:]
 
-        x_base = config.panel_width + config.minimap_size + 8
+        x_base = config.left_panel + config.minimap_size + 8
         s = self.ctx.scale
         font_size = self.FONT_SIZE * s
         line_h = self.LINE_HEIGHT * s
@@ -126,8 +126,8 @@ class KillfeedLayer(Layer):
 
         # Clip to right panel area
         cr.save()
-        clip_x = config.panel_width + config.minimap_size
-        clip_w = config.panel_width
+        clip_x = config.left_panel + config.minimap_size
+        clip_w = config.right_panel
         cr.rectangle(clip_x, 0, clip_w, config.total_height)
         cr.clip()
 

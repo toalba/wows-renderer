@@ -39,6 +39,7 @@ class MapBackgroundLayer(Layer):
             cr.save()
             cr.scale(scale, scale)
             cr.set_source_surface(water_surface, 0, 0)
+
             cr.paint()
             cr.restore()
         else:
@@ -48,14 +49,16 @@ class MapBackgroundLayer(Layer):
         # Minimap image
         if minimap_surface:
             cr.save()
-            cr.translate(config.panel_width, config.hud_height)
+            cr.translate(config.left_panel, config.hud_height)
             cr.scale(scale_x, scale_y)
             cr.set_source_surface(minimap_surface, 0, 0)
+            # Use BEST filter (lanczos) for sharp upscaling from 760→1080+
+
             cr.paint()
             cr.restore()
 
         # Grid + border
-        mx = config.panel_width
+        mx = config.left_panel
         my = config.hud_height
         ms = config.minimap_size
         cell = ms / 10.0

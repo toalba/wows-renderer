@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import math
 
 import cairo
@@ -30,10 +31,16 @@ class ShipLayer(Layer):
     DEAD_SIZE = 6.0    # X mark half-size
     DETECTED_ALPHA = 1.0
     UNDETECTED_ALPHA = 0.4
+    HEADING_LINE_LENGTH = 18.0  # Pixels at 760px reference
+    HEADING_LINE_WIDTH = 1.5
     NAME_OFFSET_Y = -14  # Pixels above ship center (at 760px)
-    NAME_FONT_SIZE = 10.5  # At 760px reference (scaled for Warhelios)
+    NAME_FONT_SIZE = 10.25  # At 760px reference (scaled for Warhelios)
     # Off-white for primary labels (easier on the eyes than pure white)
     LABEL_COLOR = (0.91, 0.89, 0.85)  # #E8E4D9
+    # Gold glow for spotted allies/self (visibility_flags != 0)
+    SPOTTED_GLOW_COLOR = (1.0, 0.84, 0.0)  # #FFD700
+    SPOTTED_GLOW_RADIUS = 1.1  # outline offset in pixels at 760px reference
+    SPOTTED_GLOW_ALPHA = 0.45
 
     def initialize(self, ctx: RenderContext) -> None:
         super().initialize(ctx)
@@ -46,6 +53,75 @@ class ShipLayer(Layer):
                 icon_key = _SPECIES_TO_ICON.get(species)
                 if icon_key:
                     self._entity_species[entity_id] = icon_key
+
+        # Build camera yaw timeline from CAMERA packets (recording player only)
+        self._camera_times: list[float] = []
+        self._camera_yaws: list[float] = []
+        self._self_entity_id: int | None = None
+        for eid, player in ctx.player_lookup.items():
+            if player.relation == 0:
+                self._self_entity_id = eid
+                break
+        self._build_camera_yaw_timeline(ctx)
+
+        # Build per-entity targetLocalPos (gun aim) timeline from property history
+        self._target_times: dict[int, list[float]] = {}
+        self._target_yaws: dict[int, list[float]] = {}
+        self._build_target_yaw_timeline(ctx)
+
+    def _build_camera_yaw_timeline(self, ctx: RenderContext) -> None:
+        """Extract camera yaw from CAMERA packet quaternions."""
+        from wows_replay_parser.packets.types import PacketType
+        for packet in ctx.replay.packets:
+            if packet.type != PacketType.CAMERA:
+                continue
+            rot = getattr(packet, "camera_rotation", None)
+            if rot is None:
+                continue
+            qx, qy, qz, qw = rot
+            siny_cosp = 2.0 * (qw * qy + qx * qz)
+            cosy_cosp = 1.0 - 2.0 * (qy * qy + qx * qx)
+            yaw = math.atan2(siny_cosp, cosy_cosp)
+            self._camera_times.append(packet.timestamp)
+            self._camera_yaws.append(yaw)
+
+    def _build_target_yaw_timeline(self, ctx: RenderContext) -> None:
+        """Build gun aim yaw timeline from targetLocalPos property changes."""
+        TWO_PI = 2.0 * math.pi
+        tracker = ctx.replay._tracker
+        for change in tracker._history:
+            if change.property_name != "targetLocalPos":
+                continue
+            val = change.new_value
+            if val is None or val == 65535:
+                continue
+            lo = int(val) & 0xFF
+            yaw = (lo / 256.0) * TWO_PI - math.pi
+            eid = change.entity_id
+            if eid not in self._target_times:
+                self._target_times[eid] = []
+                self._target_yaws[eid] = []
+            self._target_times[eid].append(change.timestamp)
+            self._target_yaws[eid].append(yaw)
+
+    def _get_camera_yaw(self, timestamp: float) -> float | None:
+        """Look up camera yaw at a given timestamp (nearest earlier sample)."""
+        if not self._camera_times:
+            return None
+        idx = bisect.bisect_right(self._camera_times, timestamp) - 1
+        if idx < 0:
+            return None
+        return self._camera_yaws[idx]
+
+    def _get_target_yaw(self, entity_id: int, timestamp: float) -> float | None:
+        """Look up gun aim yaw for entity at timestamp."""
+        times = self._target_times.get(entity_id)
+        if not times:
+            return None
+        idx = bisect.bisect_right(times, timestamp) - 1
+        if idx < 0:
+            return None
+        return self._target_yaws[entity_id][idx]
 
     def render(self, cr: cairo.Context, state: object, timestamp: float) -> None:
         config = self.ctx.config
@@ -93,6 +169,11 @@ class ShipLayer(Layer):
                 heading += math.pi
 
             if ship.is_alive:
+                # Spotted glow for allies/self when enemy can see them
+                is_spotted = relation in (0, 1) and ship.visibility_flags > 0
+                if is_spotted and icon_set:
+                    self._draw_spotted_glow(cr, px, py, heading, icon_set.get(icon_variant))
+
                 if icon_set:
                     icon_surface = icon_set.get(icon_variant)
                     if icon_surface:
@@ -101,6 +182,16 @@ class ShipLayer(Layer):
                         self._draw_triangle(cr, px, py, heading, team_color, alpha_mult)
                 else:
                     self._draw_triangle(cr, px, py, heading, team_color, alpha_mult)
+
+                # Look direction line (skip for undetected enemies — stale data)
+                if relation == 0:
+                    look_yaw = self._get_camera_yaw(timestamp)
+                    if look_yaw is not None:
+                        self._draw_heading_line(cr, px, py, look_yaw, team_color, alpha_mult)
+                elif is_detected:
+                    target_yaw = self._get_target_yaw(entity_id, timestamp)
+                    if target_yaw is not None:
+                        self._draw_heading_line(cr, px, py, target_yaw, team_color, alpha_mult)
 
                 # Player name
                 if player and is_detected:
@@ -111,6 +202,54 @@ class ShipLayer(Layer):
                     self._draw_icon(cr, px, py, 0.0, icon_set["sunk"], 0.5)
                 else:
                     self._draw_dead_marker(cr, px, py, team_color)
+
+    def _draw_spotted_glow(
+        self, cr: cairo.Context, px: float, py: float, yaw: float,
+        surface: cairo.ImageSurface | None,
+    ) -> None:
+        """Draw a gold glow outline around a spotted ally/self ship icon."""
+        if surface is None:
+            return
+        w = surface.get_width()
+        h = surface.get_height()
+        scale = self.ICON_SCALE * self.ctx.scale
+        r, g, b = self.SPOTTED_GLOW_COLOR
+        offset = self.SPOTTED_GLOW_RADIUS * self.ctx.scale
+
+        cr.save()
+        cr.translate(px, py)
+        cr.rotate(yaw - math.pi / 2)
+        cr.scale(scale, scale)
+        # Draw the icon shifted in 8 directions to create an outline glow
+        off = offset / scale  # offset in icon-space pixels
+        for dx, dy in ((-off, 0), (off, 0), (0, -off), (0, off),
+                       (-off, -off), (off, -off), (-off, off), (off, off)):
+            cr.set_source_rgba(r, g, b, self.SPOTTED_GLOW_ALPHA)
+            cr.mask_surface(surface, -w / 2 + dx, -h / 2 + dy)
+        cr.restore()
+
+    def _draw_heading_line(
+        self, cr: cairo.Context, px: float, py: float, yaw: float,
+        color: tuple[float, float, float, float], alpha_mult: float = 1.0,
+    ) -> None:
+        """Draw a line from the ship center outward in the heading direction."""
+        s = self.ctx.scale
+        length = self.HEADING_LINE_LENGTH * s
+        r, g, b, a = color
+
+        # yaw: 0=north, positive=CW. Cairo: 0=east, positive=CW.
+        # North in Cairo is -π/2, so dx/dy use sin/cos directly (compass convention).
+        dx = math.sin(yaw) * length
+        dy = -math.cos(yaw) * length
+
+        cr.save()
+        cr.set_source_rgba(r, g, b, a * alpha_mult * 0.8)
+        cr.set_line_width(self.HEADING_LINE_WIDTH * s)
+        cr.set_line_cap(cairo.LINE_CAP_ROUND)
+        cr.move_to(px, py)
+        cr.line_to(px + dx, py + dy)
+        cr.stroke()
+        cr.restore()
 
     def _draw_icon(
         self, cr: cairo.Context, px: float, py: float, yaw: float,
@@ -129,6 +268,7 @@ class ShipLayer(Layer):
         cr.rotate(yaw - math.pi / 2)
         cr.scale(scale, scale)
         cr.set_source_surface(surface, -w / 2, -h / 2)
+
         cr.paint_with_alpha(alpha)
         cr.restore()
 

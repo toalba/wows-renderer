@@ -110,7 +110,7 @@ class MinimapRenderer:
         adapter = GameStateAdapter.from_replay(
             replay,
             minimap_size=config.minimap_size,
-            panel_width=config.panel_width,
+            panel_width=config.left_panel,
             gamedata_path=config.gamedata_path,
         )
 

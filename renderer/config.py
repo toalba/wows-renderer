@@ -9,7 +9,9 @@ class RenderConfig:
 
     # Layout
     minimap_size: int = 760
-    panel_width: int = 220
+    panel_width: int = 220  # default for both panels; overridden by left/right if set
+    left_panel_width: int | None = None   # None = use panel_width
+    right_panel_width: int | None = None  # None = use panel_width
 
     # Video
     fps: int = 20
@@ -33,8 +35,16 @@ class RenderConfig:
     hud_height: int = 24  # score bar above minimap
 
     @property
+    def left_panel(self) -> int:
+        return self.left_panel_width if self.left_panel_width is not None else self.panel_width
+
+    @property
+    def right_panel(self) -> int:
+        return self.right_panel_width if self.right_panel_width is not None else self.panel_width
+
+    @property
     def total_width(self) -> int:
-        return self.panel_width + self.minimap_size + self.panel_width
+        return self.left_panel + self.minimap_size + self.right_panel
 
     @property
     def total_height(self) -> int:

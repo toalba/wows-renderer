@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 import logging
+import struct
 from functools import lru_cache
 from pathlib import Path
 
@@ -498,3 +499,47 @@ def get_font_path(gamedata_path: Path, font_name: str = "Warhelios_Bold.ttf") ->
         if p.exists():
             return p
     return Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+
+
+# ── Localization (.mo) ──────────────────────────────────────────────
+
+_mo_cache: dict[str, str] | None = None
+
+
+def load_mo_strings(gamedata_path: Path) -> dict[str, str]:
+    """Load global.mo → {key: translated_string}. Cached after first call."""
+    global _mo_cache
+    if _mo_cache is not None:
+        return _mo_cache
+
+    mo_path = gamedata_path / "global.mo"
+    _mo_cache = {}
+    if not mo_path.exists():
+        return _mo_cache
+
+    try:
+        data = mo_path.read_bytes()
+        nstrings = struct.unpack("<I", data[8:12])[0]
+        orig_off = struct.unpack("<I", data[12:16])[0]
+        trans_off = struct.unpack("<I", data[16:20])[0]
+        for i in range(nstrings):
+            olen, ooff = struct.unpack("<II", data[orig_off + i * 8 : orig_off + i * 8 + 8])
+            key = data[ooff : ooff + olen].decode("utf-8", errors="replace")
+            tlen, toff = struct.unpack("<II", data[trans_off + i * 8 : trans_off + i * 8 + 8])
+            val = data[toff : toff + tlen].decode("utf-8", errors="replace")
+            _mo_cache[key] = val
+    except Exception as e:
+        log.warning("Failed to load global.mo: %s", e)
+
+    return _mo_cache
+
+
+def get_ship_display_name(gamedata_path: Path, ship_index: str) -> str:
+    """Look up localized ship name from global.mo by index (e.g. 'PHSC710')."""
+    strings = load_mo_strings(gamedata_path)
+    key = f"IDS_{ship_index}"
+    name = strings.get(key)
+    if name:
+        return name
+    # Fallback: strip index prefix from ships.json name
+    return ship_index
