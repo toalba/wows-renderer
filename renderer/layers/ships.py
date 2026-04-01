@@ -160,13 +160,7 @@ class ShipLayer(Layer):
             species_key = self._entity_species.get(entity_id)
             icon_set = icons.get(species_key) if species_key else None
 
-            # Position packets carry yaw for all visible ships.
-            # Enemy icons from game assets point the same direction as ally
-            # icons, but the game renders enemies facing the opposite way
-            # on the minimap — add π for enemy ships.
             heading = ship.yaw
-            if relation == 2:
-                heading += math.pi
 
             if ship.is_alive:
                 # Spotted glow for allies/self when enemy can see them
