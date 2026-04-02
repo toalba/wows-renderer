@@ -11,6 +11,8 @@ class HudLayer(Layer):
     SCORE_FONT_SIZE = 17
     COUNT_FONT_SIZE = 14
 
+    CLAN_TAG_FONT_SIZE = 15
+
     def initialize(self, ctx: RenderContext) -> None:
         super().initialize(ctx)
         # Scoring config (populated from first frame's BattleState)
@@ -18,6 +20,34 @@ class HudLayer(Layer):
         self._kill_swing: int = 100  # default, updated from actual data
         self._hold_rate: float = 0.6  # pts/sec per cap held (reward/period)
         self._scoring_loaded: bool = False
+
+        # Clan battle: resolve clan tags + colors per display team
+        self._clan_tags: dict[int, tuple[str, tuple[float, float, float]]] = {}
+        game_type = ctx.replay.meta.get("gameType", "")
+        if game_type == "ClanBattle":
+            self._resolve_clan_tags(ctx)
+
+    def _resolve_clan_tags(self, ctx: RenderContext) -> None:
+        """Find the majority clan per team and store tag + color."""
+        from collections import Counter
+        for display_team in (0, 1):
+            clan_counts: Counter[str] = Counter()
+            clan_colors: dict[str, int] = {}
+            for player in ctx.player_lookup.values():
+                dt = ctx.raw_to_display_team(player.team_id)
+                if dt == display_team and player.clan_tag:
+                    clan_counts[player.clan_tag] += 1
+                    clan_colors[player.clan_tag] = player.clan_color
+            if not clan_counts:
+                continue
+            tag, count = clan_counts.most_common(1)[0]
+            if count < 4:
+                continue
+            raw_color = clan_colors[tag]
+            r = ((raw_color >> 16) & 0xFF) / 255.0
+            g = ((raw_color >> 8) & 0xFF) / 255.0
+            b = (raw_color & 0xFF) / 255.0
+            self._clan_tags[display_team] = (f"[{tag}]", (r, g, b))
 
     def render(self, cr: cairo.Context, state: object, timestamp: float) -> None:
         config = self.ctx.config
@@ -84,6 +114,8 @@ class HudLayer(Layer):
         result_winner = state.battle.battle_result_winner
 
         self._draw_score_bar(cr, panel_w, mm_size, display_scores, config.team_colors, score_rates, time_left)
+        if self._clan_tags:
+            self._draw_clan_tags(cr, panel_w, mm_size)
         self._draw_timer(cr, panel_w, mm_size, time_left, battle_stage)
         self._draw_ttw(cr, panel_w, mm_size, display_scores, score_rates, time_left)
         self._draw_kill_swing(cr, panel_w, mm_size, display_scores, score_rates, time_left)
@@ -154,6 +186,29 @@ class HudLayer(Layer):
         ext_1 = cr.text_extents(text_1)
         cr.move_to(panel_w + mm_size * 0.85 - ext_1.width / 2, y + h / 2 + ext_1.height / 2)
         cr.show_text(text_1)
+
+    def _draw_clan_tags(self, cr, panel_w, mm_size):
+        """Draw clan tags below the score bar for clan battles."""
+        y = self.SCORE_BAR_HEIGHT + 4
+        cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(self.CLAN_TAG_FONT_SIZE)
+
+        # Team 0 (ally) — left side
+        if 0 in self._clan_tags:
+            tag, (r, g, b) = self._clan_tags[0]
+            self.draw_text_halo(
+                cr, panel_w + 8, y + self.CLAN_TAG_FONT_SIZE,
+                tag, r, g, b, font_size=self.CLAN_TAG_FONT_SIZE, bold=True,
+            )
+
+        # Team 1 (enemy) — right side
+        if 1 in self._clan_tags:
+            tag, (r, g, b) = self._clan_tags[1]
+            ext = cr.text_extents(tag)
+            self.draw_text_halo(
+                cr, panel_w + mm_size - ext.width - 8, y + self.CLAN_TAG_FONT_SIZE,
+                tag, r, g, b, font_size=self.CLAN_TAG_FONT_SIZE, bold=True,
+            )
 
     def _draw_ship_counts(self, cr, total_w, mm_size, alive, team_colors):
         h = self.SCORE_BAR_HEIGHT

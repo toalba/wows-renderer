@@ -122,4 +122,5 @@ def render_replay(
     timings["encode"] = renderer.timings.get("encode", 0.0)
     timings["_frames"] = renderer.timings.get("frames", 0.0)
 
-    return output_path, replay.duration, timings, replay.game_version, len(replay.players)
+    game_type = replay.meta.get("gameType", "Unknown")
+    return output_path, replay.duration, timings, replay.game_version, len(replay.players), game_type

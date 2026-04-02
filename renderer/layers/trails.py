@@ -46,8 +46,6 @@ class TrailLayer(Layer):
         for entity_id, player in ctx.player_lookup.items():
             if player.relation == 0:
                 r, g, b, _ = ctx.config.self_color
-            elif entity_id in ctx.division_mates:
-                r, g, b, _ = ctx.config.division_color
             else:
                 c = ctx.config.team_colors.get(player.team_id, (0.5, 0.5, 0.5, 1.0))
                 r, g, b = c[0], c[1], c[2]

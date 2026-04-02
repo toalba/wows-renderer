@@ -129,7 +129,7 @@ class RenderCog(commands.Cog):
                     await interaction.edit_original_response(content=new_msg)
 
             # Collect result (raises if worker crashed)
-            _, replay_duration, timings, game_version, num_players = await future
+            _, replay_duration, timings, game_version, num_players, game_type = await future
             elapsed = time.monotonic() - t_start
 
             # Format durations
@@ -146,7 +146,7 @@ class RenderCog(commands.Cog):
                 await interaction.edit_original_response(
                     content=(
                         f"Here's your minimap replay!\n"
-                        f"Match duration: {replay_mins}:{replay_secs:02d} · "
+                        f"{game_type} · {replay_mins}:{replay_secs:02d} · "
                         f"Rendered in {elapsed:.1f}s · "
                         f"{file_size / 1024 / 1024:.1f} MB"
                     ),
