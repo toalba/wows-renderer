@@ -134,7 +134,13 @@ class RenderContext:
         return 0
 
     def _build_division_mates(self) -> set[int]:
-        """Find entity_ids sharing the recording player's division (excl self)."""
+        """Find entity_ids sharing the recording player's division (excl self).
+
+        Disabled for clan battles where everyone shares the same prebattle_id.
+        """
+        if self.replay.meta.get("gameType") == "ClanBattle":
+            return set()
+
         self_player = None
         for p in self.player_lookup.values():
             if p.relation == 0:
