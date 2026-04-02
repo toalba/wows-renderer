@@ -142,8 +142,8 @@ class ShipLayer(Layer):
                 team_color = config.self_color
                 icon_variant = "white"
             elif is_div_mate:
-                team_color = config.division_color
-                icon_variant = "ally"
+                team_color = config.team_colors.get(0, (0.33, 0.85, 0.33, 1.0))
+                icon_variant = "division"
             elif relation == 1:
                 team_color = config.team_colors.get(0, (0.33, 0.85, 0.33, 1.0))
                 icon_variant = "ally"

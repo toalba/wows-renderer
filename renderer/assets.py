@@ -163,6 +163,7 @@ def load_ship_icons(
     gamedata_path: Path,
     team_colors: dict[int, tuple[float, float, float, float]] | None = None,
     self_color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
+    division_color: tuple[float, float, float, float] = (1.0, 0.84, 0.0, 1.0),
 ) -> dict[str, dict[str, cairo.ImageSurface]]:
     """Load ship class icons from SVG minimap assets, tinted per team.
 
@@ -171,7 +172,7 @@ def load_ship_icons(
     appropriate team color before rasterization.
 
     Returns:
-        {species_lower: {"ally": surface, "enemy": surface, "white": surface, "sunk": surface}}
+        {species_lower: {"ally": ..., "enemy": ..., "white": ..., "division": ..., "sunk": ...}}
     """
     if team_colors is None:
         team_colors = {
@@ -181,16 +182,18 @@ def load_ship_icons(
     ally_hex = _rgba_to_hex(*team_colors[0][:3])
     enemy_hex = _rgba_to_hex(*team_colors[1][:3])
     self_hex = _rgba_to_hex(*self_color[:3])
+    div_hex = _rgba_to_hex(*division_color[:3])
 
     svg_dir = gamedata_path / "gui" / "fla" / "minimap" / "ship_icons"
     icons: dict[str, dict[str, cairo.ImageSurface]] = {}
 
     # Mapping: variant key → (svg filename pattern, fill color hex)
     variant_map = {
-        "ally":  ("minimap_{base}.svg", ally_hex),
-        "enemy": ("minimap_{base}.svg", enemy_hex),
-        "white": ("minimap_{base}.svg", self_hex),
-        "sunk":  ("minimap_{base}_dead.svg", None),  # keep original colors
+        "ally":     ("minimap_{base}.svg", ally_hex),
+        "enemy":    ("minimap_{base}.svg", enemy_hex),
+        "white":    ("minimap_{base}.svg", self_hex),
+        "division": ("minimap_{base}.svg", div_hex),
+        "sunk":     ("minimap_{base}_dead.svg", None),  # keep original colors
     }
 
     for species, base in _SPECIES_ICON_MAP.items():
