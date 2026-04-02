@@ -129,14 +129,15 @@ class RenderCog(commands.Cog):
                     await interaction.edit_original_response(content=new_msg)
 
             # Collect result (raises if worker crashed)
-            _, replay_duration = await future
+            _, replay_duration, timings, game_version, num_players = await future
             elapsed = time.monotonic() - t_start
 
             # Format durations
             replay_mins, replay_secs = divmod(int(replay_duration), 60)
 
-            # Send video
+            # Send video (timed as upload phase)
             file_size = output_path.stat().st_size
+            t_upload_start = time.perf_counter()
             if file_size > 25 * 1024 * 1024:
                 await interaction.edit_original_response(
                     content=f"Video is too large for Discord ({file_size / 1024 / 1024:.1f} MB > 25 MB limit).",
@@ -151,6 +152,42 @@ class RenderCog(commands.Cog):
                     ),
                     attachments=[discord.File(str(output_path), filename="minimap.mp4")],
                 )
+            upload_time = time.perf_counter() - t_upload_start
+
+            # Log timing breakdown
+            total_time = (
+                timings.get("gamedata_load", 0)
+                + timings.get("replay_decrypt", 0)
+                + timings.get("parse", 0)
+                + timings.get("render", 0)
+                + timings.get("encode", 0)
+                + upload_time
+            )
+            frames = int(timings.get("_frames", 0))
+            log.info(
+                "\n[TIMING] replay=%s players=%d duration=%.1fs"
+                "\n  gamedata_load : %.2fs"
+                "\n  replay_decrypt: %.2fs"
+                "\n  parse         : %.2fs"
+                "\n  render        : %.2fs"
+                "\n  encode        : %.2fs"
+                "\n  upload        : %.2fs"
+                "\n  TOTAL         : %.2fs"
+                "\n  video_size=%.1fMB frames=%d version=%s",
+                replay.filename,
+                num_players,
+                replay_duration,
+                timings.get("gamedata_load", 0),
+                timings.get("replay_decrypt", 0),
+                timings.get("parse", 0),
+                timings.get("render", 0),
+                timings.get("encode", 0),
+                upload_time,
+                total_time,
+                file_size / 1024 / 1024,
+                frames,
+                game_version,
+            )
 
         except asyncio.TimeoutError:
             await interaction.edit_original_response(

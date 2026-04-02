@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+from time import perf_counter
 from typing import Callable, TYPE_CHECKING
 
 import cairo
@@ -25,6 +26,7 @@ class MinimapRenderer:
         self.config = config
         self.replay = replay
         self.layers: list[Layer] = []
+        self.timings: dict[str, float] = {}  # populated after render()
 
     @classmethod
     def from_replay_file(
@@ -153,6 +155,7 @@ class MinimapRenderer:
         cr = cairo.Context(surface)
 
         # Open ffmpeg pipe with async frame writer
+        t_render_start = perf_counter()
         with FFmpegPipe(output_path, width, height, config.fps, config.crf, config.codec) as pipe:
             writer = FrameWriter(pipe)
 
@@ -182,5 +185,11 @@ class MinimapRenderer:
                     progress_callback(frame_idx + 1, total_frames)
 
             writer.finish()
+            t_render_end = perf_counter()
+        t_encode_end = perf_counter()
+
+        self.timings["render"] = t_render_end - t_render_start
+        self.timings["encode"] = t_encode_end - t_render_end
+        self.timings["frames"] = total_frames
 
         return output_path

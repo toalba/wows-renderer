@@ -109,7 +109,7 @@ class TeamRosterLayer(Layer):
                 exterior_ids=player.ship_config.exteriors,
                 learned_skill_ids=learned,
                 crew_id=player.crew_id,
-                gamedata_path=ctx.config.gamedata_path,
+                gamedata_path=ctx.config.gamedata_path / "scripts_entity" / "entity_defs",
             )
             if reloads:
                 self._entity_reload[entity_id] = reloads
