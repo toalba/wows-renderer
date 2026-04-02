@@ -73,7 +73,7 @@ class FFmpegPipe:
             "-r", str(fps),              # Frame rate
             "-i", "pipe:0",             # Read from stdin
             "-c:v", codec,               # Video codec
-            "-preset", "ultrafast",      # Speed over compression (content is simple)
+            "-preset", "fast",           # Good speed/compression balance for flat graphics
             "-tune", "animation",        # Optimized for flat graphics / few colors
             "-threads", "0",             # Use all available cores
             "-crf", str(crf),            # Quality

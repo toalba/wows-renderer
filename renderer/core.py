@@ -154,10 +154,11 @@ class MinimapRenderer:
         surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
         cr = cairo.Context(surface)
 
-        # Open ffmpeg pipe with async frame writer
-        t_render_start = perf_counter()
-        with FFmpegPipe(output_path, width, height, config.fps, config.crf, config.codec) as pipe:
-            writer = FrameWriter(pipe)
+        # Open ffmpeg pipe — manual close so we can time encode separately
+        pipe = FFmpegPipe(output_path, width, height, config.fps, config.crf, config.codec)
+        try:
+            t_render_start = perf_counter()
+            writer = FrameWriter(pipe, maxsize=16)
 
             # Use iter_states for O(delta) incremental state queries
             # instead of state_at() which is O(history) per frame.
@@ -186,7 +187,13 @@ class MinimapRenderer:
 
             writer.finish()
             t_render_end = perf_counter()
-        t_encode_end = perf_counter()
+
+            # Close pipe: flushes stdin + waits for ffmpeg to finish encoding
+            pipe.close()
+            t_encode_end = perf_counter()
+        except Exception:
+            pipe.close()
+            raise
 
         self.timings["render"] = t_render_end - t_render_start
         self.timings["encode"] = t_encode_end - t_render_end
