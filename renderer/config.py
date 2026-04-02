@@ -31,6 +31,7 @@ class RenderConfig:
         1: (1.00, 0.42, 0.42, 1.0),  # #FF6B6B (enemy) — colorblind-safe
     })
     self_color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)  # White (own ship)
+    division_color: tuple[float, float, float, float] = (1.0, 0.84, 0.0, 1.0)  # Gold yellow (division mates)
 
     hud_height: int = 24  # score bar above minimap
 

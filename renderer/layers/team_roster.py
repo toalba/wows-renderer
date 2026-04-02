@@ -373,7 +373,12 @@ class TeamRosterLayer(Layer):
         kills_w = (cr.text_extents(str(kills)).width + stat_icon_size + 4) if kills > 0 else 0
         max_name_w = stat_x - kills_w - 6 - text_x
         truncated_name = _truncate(cr, name, max_name_w, self.NAME_FONT_SIZE)
-        self.draw_cached_text(cr, text_x, line1_y, truncated_name, tr, tg, tb,
+        # Division mates highlighted in gold
+        if entity_id in self.ctx.division_mates:
+            nr, ng, nb, _ = self.ctx.config.division_color
+        else:
+            nr, ng, nb = tr, tg, tb
+        self.draw_cached_text(cr, text_x, line1_y, truncated_name, nr, ng, nb,
                               alpha=alpha, font_size=self.NAME_FONT_SIZE, bold=True)
 
         # --- Line 2: ship name (left) | consumables (center) | damage (right) ---

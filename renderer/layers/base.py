@@ -47,6 +47,7 @@ class RenderContext:
     ship_icons: dict[str, dict] | None = None  # species -> {ally/enemy/white: cairo.ImageSurface}
     first_seen: dict[int, float] | None = None  # entity_id -> first position timestamp
     _self_team_raw: int | None = None  # raw team_id of the recording player
+    division_mates: set[int] | None = None  # entity_ids in recording player's division (excl self)
 
     # Scale factor relative to 760px reference resolution.
     # All font sizes, icon sizes, offsets, line widths should multiply by this.
@@ -62,6 +63,8 @@ class RenderContext:
             self.first_seen = self._build_first_seen()
         if self._self_team_raw is None:
             self._self_team_raw = self._detect_self_team_raw()
+        if self.division_mates is None:
+            self.division_mates = self._build_division_mates()
 
     def _build_first_seen(self) -> dict[int, float]:
         """Build lookup of first real position update per entity.
@@ -129,6 +132,20 @@ class RenderContext:
                     return int(raw_tid)
 
         return 0
+
+    def _build_division_mates(self) -> set[int]:
+        """Find entity_ids sharing the recording player's division (excl self)."""
+        self_player = None
+        for p in self.player_lookup.values():
+            if p.relation == 0:
+                self_player = p
+                break
+        if self_player is None or not self_player.prebattle_id:
+            return set()
+        return {
+            eid for eid, p in self.player_lookup.items()
+            if p.prebattle_id == self_player.prebattle_id and p.relation != 0
+        }
 
     def raw_to_display_team(self, raw_team_id: int) -> int:
         """Map a raw team_id from game data to display team (0=ally, 1=enemy).

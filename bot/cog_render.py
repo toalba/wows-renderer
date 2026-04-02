@@ -155,33 +155,25 @@ class RenderCog(commands.Cog):
             upload_time = time.perf_counter() - t_upload_start
 
             # Log timing breakdown
-            total_time = (
-                timings.get("gamedata_load", 0)
-                + timings.get("replay_decrypt", 0)
-                + timings.get("parse", 0)
-                + timings.get("render", 0)
-                + timings.get("encode", 0)
-                + upload_time
-            )
+            parse_time = timings.get("parse", 0)
+            render_time = timings.get("render", 0)
+            encode_time = timings.get("encode", 0)
+            total_time = parse_time + render_time + encode_time + upload_time
             frames = int(timings.get("_frames", 0))
             log.info(
                 "\n[TIMING] replay=%s players=%d duration=%.1fs"
-                "\n  gamedata_load : %.2fs"
-                "\n  replay_decrypt: %.2fs"
-                "\n  parse         : %.2fs"
-                "\n  render        : %.2fs"
-                "\n  encode        : %.2fs"
-                "\n  upload        : %.2fs"
-                "\n  TOTAL         : %.2fs"
+                "\n  parse  : %.2fs"
+                "\n  render : %.2fs"
+                "\n  encode : %.2fs"
+                "\n  upload : %.2fs"
+                "\n  TOTAL  : %.2fs"
                 "\n  video_size=%.1fMB frames=%d version=%s",
                 replay.filename,
                 num_players,
                 replay_duration,
-                timings.get("gamedata_load", 0),
-                timings.get("replay_decrypt", 0),
-                timings.get("parse", 0),
-                timings.get("render", 0),
-                timings.get("encode", 0),
+                parse_time,
+                render_time,
+                encode_time,
                 upload_time,
                 total_time,
                 file_size / 1024 / 1024,
