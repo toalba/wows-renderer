@@ -48,7 +48,7 @@ wows-minimap-renderer/
 └── CLAUDE.md
 ```
 
-## Current Status (2026-04-01)
+## Current Status (2026-04-02)
 
 ### Working — 16 Rendering Layers
 1. **map_bg** — Water texture + minimap PNG + grid + labels (pre-rendered static cache, single paint per frame)
@@ -57,7 +57,7 @@ wows-minimap-renderer/
 4. **smoke** — Smoke screen radius circles from NESTED_PROPERTY puff positions
 5. **projectiles** — Shell traces colored by ammo type (AP=white, HE=orange, SAP=pink) + torpedo dots; caliber-scaled line widths
 6. **aircraft** — CV squadrons (controllable) + airstrikes on minimap with team-colored icons
-7. **ships** — Ship class icons (28x28 RGBA, rotated by yaw) + player names (cached text surfaces) + spotted glow
+7. **ships** — Ship class icons (28x28 RGBA, rotated by yaw) + player names (cached text surfaces) + spotted glow + division mate gold icons
 8. **health_bars** — Per-ship HP bars (green/yellow/red) + repair party recoverable segment + ship names (cached)
 9. **consumables** — Consumable icons near ships + radar/hydro detection radius circles (team-colored: blue=ally, red=enemy)
 10. **player_header** — Right panel top: self-player header with ship silhouette HP bar, healable segment, clan tag + name
@@ -65,19 +65,24 @@ wows-minimap-renderer/
 12. **ribbons** — Right panel: recording player's ribbon counters in grouped layout (main + sub-ribbons), accumulating per frame, first-appearance order
 13. **killfeed** — Right panel: recent kills with frag icons, killer/victim names + ships, bottom-anchored growing upward
 14. **right_panel** — Composite layer: player_header + damage_stats + ribbons + killfeed with clipping
-15. **hud** — Score bar with projected winner highlight, MM:SS timer, TTW pills (diamond icon, winner highlighting), "1 KILL DECIDES" indicator (team-colored glow), match result overlay
+15. **hud** — Score bar with projected winner highlight, MM:SS timer, TTW pills (diamond icon, winner highlighting), "1 KILL DECIDES" indicator (team-colored glow), match result overlay, clan battle clan tags (with clan colors)
 16. **trails** — Fading ship movement trails (pre-sampled at init, gap detection)
 
 ### Performance
 - **~60 fps** rendering at 1920x1104 (1080px minimap + 420px panels)
 - **~17ms/frame** average (encode 34%, team_roster 21%, ships 8%, right_panel 8%)
-- **Async FrameWriter** — pipe I/O offloaded to background thread (video.py)
+- **Async FrameWriter** — pipe I/O offloaded to background thread (video.py), queue size 16
+- **FFmpeg fast preset** — 3x smaller output vs ultrafast (~5MB vs 16MB for typical match)
 - **Static background cache** — map_bg renders once at init, single cr.paint() per frame
 - **Text surface cache** — draw_cached_text() renders text to small surfaces once, blits via cr.paint()
 - **Index-based timestamps** — avoids float accumulation drift
 
 ### Other Features
 - Ship positions (all players including self) with team colors (green=ally, red=enemy, white=self)
+- **Division mate highlighting** — gold yellow icons + roster icons for players in recording player's division (disabled in clan battles)
+- **Clan battle support** — clan tags displayed below score bar in each clan's color (majority clan ≥4 players per team)
+- **Game type in Discord message** — shows RandomBattle, ClanBattle, CooperativeBattle etc.
+- **Per-phase timing instrumentation** — parse/render/encode/upload breakdown logged after each render
 - Self player position tracking via PLAYER_ORIENTATION (0x2C) packets
 - Self-team detection and perspective swap (Trap 5)
 - Undetected enemies shown at 40% alpha (detection from visibility_flags)
@@ -234,7 +239,8 @@ Shared context passed to all layers via `initialize()`:
 | `map_size` | `float` | space_size from map_sizes.json |
 | `player_lookup` | `dict[int, PlayerInfo]` | entity_id -> player info |
 | `ship_db` | `dict[int, dict] | None` | ship_id -> {name, species, nation, level} |
-| `ship_icons` | `dict[str, dict] | None` | species -> {ally/enemy/white/sunk: cairo.ImageSurface} |
+| `ship_icons` | `dict[str, dict] | None` | species -> {ally/enemy/white/division/sunk: cairo.ImageSurface} |
+| `division_mates` | `set[int]` | entity_ids of recording player's division mates (empty for clan battles) |
 | `first_seen` | `dict[int, float] | None` | entity_id -> first position timestamp |
 | `scale` | `float` (property) | Scale factor relative to 760px reference |
 
@@ -271,6 +277,10 @@ Key methods:
 | Repair Party recoverable HP | `health_bars.py` | DONE |
 | Self-player damage breakdown | `damage_stats.py` | DONE (via DamageReceivedStatEvent) |
 | Self-player header + silhouette HP | `player_header.py` | DONE |
+| Division mate highlighting | `ships.py` + `team_roster.py` + `base.py` | DONE (gold icons on minimap + roster, disabled in clan battles) |
+| Clan battle clan tags | `hud.py` | DONE (below score bar, clan colors, majority ≥4 players) |
+| Game type in Discord message | `cog_render.py` + `worker.py` | DONE |
+| Per-phase timing instrumentation | `worker.py` + `core.py` + `cog_render.py` | DONE (parse/render/encode/upload) |
 | Per-player damage breakdown (all players) | — | NOT POSSIBLE (game protocol only sends typed damage for self) |
 | Dual perspective combined | `merge.py` in parser | NOT STARTED |
 
@@ -298,8 +308,9 @@ Key methods:
 2. Validate extension + file size -> defer interaction
 3. Download to temp dir -> dispatch to `ProcessPoolExecutor`
 4. Poll progress queue -> edit Discord message with `Rendering... X%`
-5. Send mp4 with match duration, render time, file size
-6. Cleanup temp dir
+5. Send mp4 with game type, match duration, render time, file size
+6. Log per-phase timing breakdown (parse/render/encode/upload)
+7. Cleanup temp dir
 
 ## Configurable Parameters (RenderConfig)
 
@@ -318,6 +329,7 @@ All parameters are validated in `__post_init__()`. String paths are auto-coerced
 | `trail_length` | 30.0 | Ship trail duration in seconds; must be >= 0 |
 | `team_colors` | green/red | RGBA tuples per display team (0=ally, 1=enemy) |
 | `self_color` | white | RGBA for the recording player's ship |
+| `division_color` | gold yellow | RGBA for division mate highlighting |
 | `hud_height` | 24 | Score bar height above minimap |
 
 ## Development

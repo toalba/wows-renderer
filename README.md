@@ -11,6 +11,8 @@ Built for the Wargaming community bounty (KOTS referee tooling).
 - **16 composable rendering layers** — map background, team rosters, capture points, smoke, projectiles, aircraft, ships, health bars, consumables, player header, damage stats, ribbons, killfeed, right panel composite, HUD, trails
 - Ship positions with rotated class icons (destroyer, cruiser, battleship, carrier, submarine)
 - Team-colored ships (green = ally, red = enemy, white = self) with player names
+- **Division mate highlighting** — gold yellow ship icons on minimap + team roster for players in the recording player's division
+- **Clan battle support** — clan tags displayed below score bar in each clan's color
 - Shell traces colored by ammo type (AP/HE/SAP) + torpedo tracks
 - Capture zone circles with progress bars and team ownership
 - Per-ship health bars with repair party recoverable HP
@@ -23,7 +25,7 @@ Built for the Wargaming community bounty (KOTS referee tooling).
 - Kill feed + ribbon counters
 - Configurable speed, resolution, FPS, time range, and quality (with input validation)
 - Direct FFmpeg pipe with async frame writer (~17ms/frame at 1080p)
-- **Discord bot** — `/render` slash command with progress reporting
+- **Discord bot** — `/render` slash command with progress reporting, game type display, per-phase timing
 - **Docker support** — multi-stage build with all dependencies
 
 ---
@@ -215,6 +217,7 @@ All rendering parameters are controlled via `RenderConfig`. Invalid values raise
 | `trail_length` | 30.0 | Ship movement trail duration in seconds |
 | `team_colors` | green/red | RGBA tuples per team ID |
 | `self_color` | white | RGBA tuple for the recording player's ship |
+| `division_color` | gold yellow | RGBA tuple for division mate highlighting |
 
 Total output resolution = `left_panel + minimap_size + right_panel` x `minimap_size + hud_height`.
 
@@ -232,12 +235,12 @@ Layers are composited bottom-to-top. Each layer is independent and optional.
 | `SmokeLayer` | Smoke screen radius visualization |
 | `ProjectileLayer` | Shell traces (AP/HE/SAP colored) + torpedo tracks |
 | `AircraftLayer` | CV squadrons + airstrike icons |
-| `ShipLayer` | Rotated ship class icons, player names, team colors, spotted glow |
+| `ShipLayer` | Rotated ship class icons, player names, team colors, spotted glow, division mate gold icons |
 | `TrailLayer` | Fading ship movement trails |
 | `HealthBarLayer` | Per-ship HP bars + repair party recoverable HP |
 | `ConsumableLayer` | Consumable icons + radar/hydro detection radius circles |
 | `RightPanelLayer` | Composite: player header + damage stats + ribbons + killfeed |
-| `HudLayer` | Score bar, timer, TTW pills, 1-kill-swing indicator, match result |
+| `HudLayer` | Score bar, timer, TTW pills, 1-kill-swing indicator, match result, clan battle tags |
 
 The `RightPanelLayer` is a composite of four sub-layers:
 - **PlayerHeaderLayer** — Self-player ship silhouette with HP bar + clan tag + name
@@ -295,7 +298,7 @@ All config is via environment variables (or `.env` file):
 | `COOLDOWN_SECONDS` | `60` | Per-user rate limit |
 | `MAX_UPLOAD_MB` | `50` | Max replay file size |
 
-The bot renders replays in a `ProcessPoolExecutor` (separate processes for CPU-bound cairo work), reports progress to Discord in real-time, and includes match duration + render time in the response.
+The bot renders replays in a `ProcessPoolExecutor` (separate processes for CPU-bound cairo work), reports progress to Discord in real-time, and includes game type, match duration, render time, and file size in the response. Per-phase timing (parse/render/encode/upload) is logged for performance monitoring.
 
 ### Presets
 
