@@ -147,6 +147,7 @@ class RenderCog(commands.Cog):
                     content=(
                         f"Here's your minimap replay!\n"
                         f"{game_type} · {replay_mins}:{replay_secs:02d} · "
+                        f"v{game_version} · "
                         f"Rendered in {elapsed:.1f}s · "
                         f"{file_size / 1024 / 1024:.1f} MB"
                     ),
