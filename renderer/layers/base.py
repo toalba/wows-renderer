@@ -67,30 +67,47 @@ class RenderContext:
             self.division_mates = self._build_division_mates()
 
     def _build_first_seen(self) -> dict[int, float]:
-        """Build lookup of first real position update per entity.
+        """Build lookup of first real visibility per entity.
 
-        Ships should not be rendered before their first actual position update.
-        A position at t=0.0 is only valid for ally ships (relation 0 or 1),
-        since enemies cannot be spotted at match start.
+        Allies (relation 0, 1): use first position timestamp (always valid).
+        Enemies (relation 2): use first MinimapVisionEvent where is_visible=True,
+        falling back to the first real position timestamp. Vision events arrive
+        before position packets, so this avoids the 1-second gap where an enemy
+        is spotted but has no position data yet.
         """
         tracker = getattr(self.replay, "_tracker", None)
         if tracker is None:
             return {}
         positions = getattr(tracker, "_positions", {})
+        minimap = getattr(tracker, "_minimap_positions", {})
         result: dict[int, float] = {}
+
         for entity_id, pos_list in positions.items():
             if not pos_list:
                 continue
-            first_t = pos_list[0][0]
-            # If first position is at t=0 for an enemy, it's a fake default —
-            # use the second position entry instead (if available)
             player = self.player_lookup.get(entity_id)
-            if player and player.relation == 2 and first_t < 1.0:
-                if len(pos_list) > 1:
-                    first_t = pos_list[1][0]
-                else:
-                    first_t = float("inf")  # never seen
-            result[entity_id] = first_t
+
+            if player and player.relation == 2:
+                # Enemy: prefer first vision event (spotted) timestamp
+                first_vision_t = float("inf")
+                mm_entries = minimap.get(entity_id, [])
+                for entry in mm_entries:
+                    # entry: (timestamp, world_x, world_z, heading_rad, is_visible, is_disappearing)
+                    if entry[4] and not entry[5]:  # is_visible and not is_disappearing
+                        first_vision_t = entry[0]
+                        break
+
+                # Fall back to first real position (skip t<1.0 fakes)
+                first_pos_t = float("inf")
+                for pos in pos_list:
+                    if pos[0] >= 1.0:
+                        first_pos_t = pos[0]
+                        break
+
+                result[entity_id] = min(first_vision_t, first_pos_t)
+            else:
+                # Ally/self: first position is always valid
+                result[entity_id] = pos_list[0][0]
         return result
 
     def is_visible(self, entity_id: int, timestamp: float) -> bool:
