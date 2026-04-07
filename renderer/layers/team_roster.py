@@ -196,12 +196,33 @@ class TeamRosterLayer(Layer):
         self._kill_idx: int = 0
 
         # Damage dealt from DamageEvents (attacker-attributed)
+        # For the self player, use server-authoritative receiveDamageStat
+        # instead of receiveDamagesOnShip (which undercounts fire/flood/DoT).
+        self._self_vehicle_eid: int | None = None
+        for p in ctx.player_lookup.values():
+            if p.relation == 0:
+                self._self_vehicle_eid = p.entity_id
+                break
+
         self._damage_events: list[tuple[float, int, float]] = []
         for event in ctx.replay.events:
             if type(event).__name__ == "DamageEvent" and event.entity_id == event.target_id:
                 attacker_id = event.raw_data.get("vehicleID")
                 if attacker_id and attacker_id != event.entity_id and event.damage > 0:
+                    # Skip self-player damage from this source (replaced below)
+                    if attacker_id == self._self_vehicle_eid:
+                        continue
                     self._damage_events.append((event.timestamp, attacker_id, event.damage))
+
+        # Self-player damage from receiveDamageStat (authoritative, includes fire/flood)
+        if self._self_vehicle_eid is not None:
+            for event in ctx.replay.events:
+                if (type(event).__name__ == "DamageReceivedStatEvent"
+                        and event.stat_type == "ENEMY"
+                        and event.delta_total > 0):
+                    self._damage_events.append(
+                        (event.timestamp, self._self_vehicle_eid, event.delta_total))
+
         self._damage_events.sort(key=lambda x: x[0])
         self._damage: dict[int, int] = {}
         self._dmg_idx: int = 0
