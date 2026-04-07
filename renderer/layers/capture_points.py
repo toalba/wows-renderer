@@ -10,110 +10,141 @@ from renderer.layers.base import Layer, RenderContext, FONT_FAMILY
 class CapturePointLayer(Layer):
     """Draws capture point circles with team colors, progress arcs, and labels.
 
-    Visual states:
-    - Neutral (gray): no team owns it, no one inside
-    - Owned (team color fill): a team controls the point
-    - Being captured (progress arc): invader team color arc shows progress
-    - Contested (both_inside): flashing/dashed border indicates blocked capture
+    Supports standard domination, Arms Race (late-spawning shrinking zone +
+    buff pickups), and PvE/operation zones that spawn mid-match.
+
+    All zone data is queried live per frame from the game state — no init-time
+    caching of positions or radii. InteractiveZone entities that haven't been
+    created yet or have been destroyed are simply absent from the state.
+
+    Zone types (from InteractiveZone.type property):
+      9  = Main capture zone (Arms Race central point, shrinks over time)
+      6  = Buff pickup zone (Arms Race collectibles, radius=48)
+      12 = ASW/ward zone (carrier consumable, short-lived, skip rendering)
+      0  = Standard capture point (domination/epicenter)
     """
 
     NEUTRAL_COLOR = (0.7, 0.7, 0.7)
-    CONTESTED_COLOR = (1.0, 0.85, 0.0)  # Yellow for contested
+    CONTESTED_COLOR = (1.0, 0.85, 0.0)
+    BUFF_ALPHA = 0.25
+    BUFF_BORDER_ALPHA = 0.5
+    BUFF_RADIUS_PX = 8.0  # small fixed-size marker for buffs at 760px ref
     CAP_LABELS = "ABCDEFGH"
     LABEL_FONT_SIZE = 22
     DEFAULT_RADIUS = 75.0
-
-    _cap_positions: dict[int, tuple[float, float]]
-    _cap_radii: dict[int, float]
-    _cap_order: list[int]
+    # Zone types to skip rendering (wards/ASW zones from carrier consumables)
+    _SKIP_TYPES = {12}
 
     def initialize(self, ctx: RenderContext) -> None:
         super().initialize(ctx)
+        # Pre-build a sorted cap order from early game state for label assignment.
+        # This only determines the A/B/C/D letter mapping, not visibility.
+        self._cap_label_order: list[int] = []
+        self._build_label_order(ctx)
 
-        replay = ctx.replay
-        map_size = ctx.map_size
-        mm = ctx.config.minimap_size
-        tracker = replay._tracker if hasattr(replay, "_tracker") else None
+    def _build_label_order(self, ctx: RenderContext) -> None:
+        """Assign cap letters by scanning states at a few timestamps."""
+        tracker = ctx.replay._tracker
+        seen: dict[int, tuple[float, int]] = {}  # eid -> (x_pos, point_index)
 
-        self._cap_positions = {}
-        self._cap_radii = {}
-        entity_ids: list[int] = []
-
-        state = replay.state_at(10.0)
-        for cap in state.battle.capture_points:
-            eid = cap.entity_id
-            entity_ids.append(eid)
-            if tracker:
-                pos = tracker.position_at(eid, 10.0)
-                if pos is not None:
-                    wx, _, wz = pos
-                    self._cap_positions[eid] = ctx.world_to_pixel(wx, wz)
-            pixel_radius = cap.radius / map_size * mm if cap.radius > 0 else self.DEFAULT_RADIUS / map_size * mm
-            self._cap_radii[eid] = pixel_radius
-
-        if not entity_ids and tracker:
-            for eid, etype in tracker._entity_types.items():
-                if etype in ("InteractiveObject", "InteractiveZone"):
-                    pos = tracker.position_at(eid, 0.1)
-                    if pos is not None:
-                        wx, _, wz = pos
-                        self._cap_positions[eid] = ctx.world_to_pixel(wx, wz)
-                        self._cap_radii[eid] = self.DEFAULT_RADIUS / map_size * mm
-                        entity_ids.append(eid)
-
-        def sort_key(eid):
+        for t in (10.0, 30.0, 60.0, 300.0, 600.0):
+            state = ctx.replay.state_at(t)
             for cap in state.battle.capture_points:
-                if cap.entity_id == eid and cap.point_index >= 0:
-                    return cap.point_index
-            return self._cap_positions.get(eid, (0, 0))[0]
+                eid = cap.entity_id
+                if eid in seen:
+                    continue
+                # Skip non-capture zones (buffs, wards)
+                zone_type = self._get_zone_type(tracker, eid)
+                if zone_type in self._SKIP_TYPES or zone_type == 6:
+                    continue
+                pos = tracker.position_at(eid, t)
+                x = pos[0] if pos else 0.0
+                idx = cap.point_index if cap.point_index >= 0 else 999
+                seen[eid] = (x, idx)
 
-        entity_ids.sort(key=sort_key)
-        self._cap_order = entity_ids
+        # Sort by point_index first, then x position
+        self._cap_label_order = sorted(seen, key=lambda e: (seen[e][1], seen[e][0]))
+
+    def _get_zone_type(self, tracker, eid: int) -> int:
+        """Get InteractiveZone type property (0 if unknown)."""
+        props = tracker._current.get(eid, {})
+        return int(props.get("type", 0))
 
     def render(self, cr: cairo.Context, state: object, timestamp: float) -> None:
         config = self.ctx.config
         team_colors = config.team_colors
+        tracker = self.ctx.replay._tracker
+        map_size = self.ctx.map_size
+        mm = config.minimap_size
 
         cap_states = {}
         for cap in state.battle.capture_points:
             cap_states[cap.entity_id] = cap
 
-        for eid in self._cap_order:
-            pos = self._cap_positions.get(eid)
-            if pos is None:
+        # Collect all renderable zones from current state
+        rendered_caps: list[int] = []
+
+        for cap in state.battle.capture_points:
+            eid = cap.entity_id
+            zone_type = self._get_zone_type(tracker, eid)
+
+            # Skip ward/ASW zones
+            if zone_type in self._SKIP_TYPES:
                 continue
 
-            px, py = pos
-            radius = self._cap_radii.get(eid, 20.0)
-            cap = cap_states.get(eid)
+            # Skip entities that have left the game (collected buffs, expired zones).
+            # The tracker doesn't remove InteractiveZones from state after EntityLeave.
+            leave_time = tracker._entity_leave_times.get(eid)
+            if leave_time is not None and timestamp >= leave_time:
+                continue
+
+            # Get live position
+            pos = tracker.position_at(eid, timestamp)
+            if pos is None:
+                continue
+            wx, _, wz = pos
+            px, py = self.ctx.world_to_pixel(wx, wz)
+
+            # cap.radius is live from iter_states (supports shrinking)
+            radius_world = cap.radius if cap.radius > 0 else self.DEFAULT_RADIUS
+
+            if zone_type == 6:
+                # Buff pickup — small marker
+                self._render_buff(cr, px, py, cap, team_colors)
+                continue
+
+            # Don't render capture zones that aren't active yet (e.g. Arms Race
+            # main zone before the timer expires). is_enabled is set by the server
+            # when the zone becomes capturable.
+            if not cap.is_enabled and cap.progress < 0.01 and cap.team_id < 0:
+                continue
+
+            pixel_radius = radius_world / map_size * mm
+            rendered_caps.append(eid)
 
             # Determine owner color
             owner_r, owner_g, owner_b = self.NEUTRAL_COLOR
-            if cap and cap.team_id >= 0:
+            if cap.team_id >= 0:
                 display_team = self.ctx.raw_to_display_team(cap.team_id)
                 if display_team in team_colors:
                     owner_r, owner_g, owner_b, _ = team_colors[display_team]
 
             # Fill circle with owner color
             cr.new_sub_path()
-            cr.arc(px, py, radius, 0, 2 * math.pi)
+            cr.arc(px, py, pixel_radius, 0, 2 * math.pi)
             cr.set_source_rgba(owner_r, owner_g, owner_b, 0.15)
             cr.fill()
 
-            # Border: solid owner color
+            # Border
             cr.new_sub_path()
-            cr.arc(px, py, radius, 0, 2 * math.pi)
+            cr.arc(px, py, pixel_radius, 0, 2 * math.pi)
             cr.set_source_rgba(owner_r, owner_g, owner_b, 0.5)
             cr.set_line_width(2.0)
             cr.stroke()
 
-            # Progress arc (if being captured by the opposing team)
-            # Skip during pre-battle (battleStage != 0) — initial state can be stale
-            # Skip when invader == owner (own team inside their pre-owned zone)
-            # Require is_enabled — server sets this when caps become active,
-            # avoids stale initial componentsState values showing at battle start.
+            # Progress arc
             battle_active = state.battle.battle_stage == 0
-            cap_active = cap and cap.is_enabled
+            cap_active = cap.is_enabled
             being_captured = (cap_active and cap.progress > 0.01 and cap.has_invaders
                               and cap.invader_team != cap.team_id)
             if battle_active and being_captured:
@@ -123,50 +154,72 @@ class CapturePointLayer(Layer):
                     if inv_display in team_colors:
                         inv_r, inv_g, inv_b, _ = team_colors[inv_display]
 
-                # Draw progress arc (clockwise from top)
                 start_angle = -math.pi / 2
                 end_angle = start_angle + 2 * math.pi * cap.progress
 
-                # Thick progress arc on the border
                 cr.new_sub_path()
-                cr.arc(px, py, radius, start_angle, end_angle)
+                cr.arc(px, py, pixel_radius, start_angle, end_angle)
                 cr.set_source_rgba(inv_r, inv_g, inv_b, 0.9)
                 cr.set_line_width(4.0)
                 cr.stroke()
 
-                # Inner progress fill (subtle)
                 if cap.progress > 0.05:
                     cr.new_sub_path()
                     cr.move_to(px, py)
-                    cr.arc(px, py, radius * 0.9, start_angle, end_angle)
+                    cr.arc(px, py, pixel_radius * 0.9, start_angle, end_angle)
                     cr.close_path()
                     cr.set_source_rgba(inv_r, inv_g, inv_b, 0.12)
                     cr.fill()
 
-            # Contested indicator (both teams inside)
+            # Contested indicator
             if cap_active and cap.both_inside:
                 cr.new_sub_path()
-                cr.arc(px, py, radius + 3, 0, 2 * math.pi)
+                cr.arc(px, py, pixel_radius + 3, 0, 2 * math.pi)
                 yr, yg, yb = self.CONTESTED_COLOR
                 cr.set_source_rgba(yr, yg, yb, 0.7)
                 cr.set_line_width(2.0)
                 cr.set_dash([6, 4])
                 cr.stroke()
-                cr.set_dash([])  # Reset dash
+                cr.set_dash([])
 
-            # Cap letter label with halo
-            label_idx = self._cap_order.index(eid) if eid in self._cap_order else 0
+            # Cap letter label
+            if eid in self._cap_label_order:
+                label_idx = self._cap_label_order.index(eid)
+            else:
+                label_idx = len(rendered_caps) - 1
             label = self.CAP_LABELS[label_idx % len(self.CAP_LABELS)]
-
-            cr.select_font_face(
-                FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD
-            )
-            cr.set_font_size(self.LABEL_FONT_SIZE)
-            ext = cr.text_extents(label)
 
             s = self.ctx.scale
             self.draw_text_halo(
-                cr, px - ext.width / 2, py + ext.height / 2, label,
+                cr, px - self.LABEL_FONT_SIZE * s * 0.3, py + self.LABEL_FONT_SIZE * s * 0.35,
+                label,
                 owner_r, owner_g, owner_b, alpha=0.9,
                 font_size=self.LABEL_FONT_SIZE * s, bold=True, outline_width=3.5 * s,
             )
+
+    def _render_buff(
+        self, cr: cairo.Context, px: float, py: float,
+        cap, team_colors: dict,
+    ) -> None:
+        """Render a buff pickup zone as a small diamond marker."""
+        s = self.ctx.scale
+        size = self.BUFF_RADIUS_PX * s
+
+        # Neutral color for uncollected buffs
+        r, g, b = self.NEUTRAL_COLOR
+        if cap.team_id >= 0:
+            display_team = self.ctx.raw_to_display_team(cap.team_id)
+            if display_team in team_colors:
+                r, g, b, _ = team_colors[display_team]
+
+        # Diamond shape
+        cr.save()
+        cr.translate(px, py)
+        cr.rotate(math.pi / 4)
+        cr.rectangle(-size, -size, size * 2, size * 2)
+        cr.set_source_rgba(r, g, b, self.BUFF_ALPHA)
+        cr.fill_preserve()
+        cr.set_source_rgba(r, g, b, self.BUFF_BORDER_ALPHA)
+        cr.set_line_width(1.5 * s)
+        cr.stroke()
+        cr.restore()
