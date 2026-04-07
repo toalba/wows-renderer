@@ -48,16 +48,16 @@ wows-minimap-renderer/
 └── CLAUDE.md
 ```
 
-## Current Status (2026-04-02)
+## Current Status (2026-04-07)
 
 ### Working — 16 Rendering Layers
 1. **map_bg** — Water texture + minimap PNG + grid + labels (pre-rendered static cache, single paint per frame)
 2. **team_roster** — Left panel with both teams: class icon, player name, ship name, kills (incremental), damage (incremental), HP bar, consumable icons with active/cooldown timers
 3. **capture_points** — Cap circles with progress arcs, team colors, contested indicators, A-H labels
-4. **smoke** — Smoke screen radius circles from NESTED_PROPERTY puff positions
+4. **smoke** — Smoke screen radius circles from NESTED_PROPERTY puff positions, per-puff FIFO lifecycle (earlier puffs expire first)
 5. **projectiles** — Shell traces colored by ammo type (AP=white, HE=orange, SAP=pink) + torpedo dots; caliber-scaled line widths
-6. **aircraft** — CV squadrons (controllable) + airstrikes on minimap with team-colored icons
-7. **ships** — Ship class icons (28x28 RGBA, rotated by yaw) + player names (cached text surfaces) + spotted glow + division mate gold icons
+6. **aircraft** — CV squadrons + airstrikes + consumable planes on minimap with type-specific icons (fighter/bomber/torpedo/skip/scout/depth charge) resolved from GameParams split data via params_id
+7. **ships** — Ship class SVG icons (from minimap ship_icons/, tinted per team, cairosvg) + player names (cached text surfaces) + spotted glow + division mate gold icons
 8. **health_bars** — Per-ship HP bars (green/yellow/red) + repair party recoverable segment + ship names (cached)
 9. **consumables** — Consumable icons near ships + radar/hydro detection radius circles (team-colored: blue=ally, red=enemy)
 10. **player_header** — Right panel top: self-player header with ship silhouette HP bar, healable segment, clan tag + name
@@ -85,6 +85,7 @@ wows-minimap-renderer/
 - **Per-phase timing instrumentation** — parse/render/encode/upload breakdown logged after each render
 - Self player position tracking via PLAYER_ORIENTATION (0x2C) packets
 - Self-team detection and perspective swap (Trap 5)
+- **Vision-based enemy visibility** — enemies appear when first spotted via MinimapVisionEvent, not when first position packet arrives (fixes multi-second gaps)
 - Undetected enemies shown at 40% alpha (detection from visibility_flags)
 - Dead ships shown with sunk icon variant
 - ship_consumables.json loading: works with or without split/Ship directory
@@ -95,6 +96,7 @@ wows-minimap-renderer/
 
 ### Known Issues
 - Ribbon derive_ribbons() has a bug (RIBBON_NAMES dict inverted) — using extract_recording_player_ribbons() instead
+- Airstrike icons for other players' airstrikes may show default (bomber_depth_charge) when params_id=0 in wire protocol
 
 ## Dependencies
 
@@ -260,7 +262,7 @@ Key methods:
 | Discord bot + user interaction | `bot/` | DONE |
 | Capture points + status + progress | `capture_points.py` | DONE |
 | Total team points | `hud.py` | DONE |
-| Maintained for 1 year | Automated gamedata pipeline | DONE (git pull) |
+| Maintained for 1 year | Automated gamedata pipeline + gamedata_sync | DONE (auto-checkout matching version tag) |
 | Apache 2.0, WG copyright | `LICENSE` | TODO |
 
 ### Nice-to-have (P2)
@@ -269,7 +271,7 @@ Key methods:
 |---|---|---|
 | Ribbons | `ribbons.py` | DONE |
 | Team roster side panels | `team_roster.py` | DONE |
-| Aircraft (CV squadrons + airstrikes) | `aircraft.py` | DONE (airstrike team_id fix pending) |
+| Aircraft (CV squadrons + airstrikes) | `aircraft.py` | DONE (type-specific icons from GameParams) |
 | TTW + projected winner | `hud.py` | DONE |
 | 1 kill swing indicator | `hud.py` | DONE |
 | Kill feed | `killfeed.py` | DONE |
@@ -366,11 +368,11 @@ uv pip install "wows-replay-parser @ git+ssh://git@github.com/toalba/wows-replay
 3. LICENSE file (Apache 2.0, WG copyright)
 4. ~~Fix aircraft airstrike team_id~~ DONE (parser commit e335703)
 5. ~~Per-player damage type breakdown~~ DONE for self player; NOT POSSIBLE for other players (game protocol limitation)
-6. Visual polish + edge case handling
+6. ~~Visual polish + edge case handling~~ DONE (visibility, smoke lifecycle, aircraft icons, SVG ship icons)
 
 ### Nice-to-have (P2)
 7. Dual perspective merge
-8. Version-awareness for projectiles.json and ship_consumables.json (cross-patch replay support)
+8. ~~Version-awareness for gamedata~~ DONE (gamedata_sync auto-checkouts matching tag)
 
 ## Damage Breakdown
 

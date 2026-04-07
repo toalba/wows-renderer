@@ -17,7 +17,7 @@ Built for the Wargaming community bounty (KOTS referee tooling).
 - Capture zone circles with progress bars and team ownership
 - Per-ship health bars with repair party recoverable HP
 - Smoke screen, consumable radius indicators (radar/hydro circles)
-- Aircraft layer (CV squadrons + airstrikes)
+- Aircraft layer with type-specific icons (fighters, bombers, torpedo planes, scouts, depth charges) resolved from GameParams
 - HUD overlay with team scores, timer, TTW pills, 1-kill-swing indicator, match result
 - Team roster side panels with kills, damage, HP, consumable timers
 - Self-player damage breakdown by weapon type (AP/HE/SAP/torp/fire/flood/secondary)
@@ -232,9 +232,9 @@ Layers are composited bottom-to-top. Each layer is independent and optional.
 | `MapBackgroundLayer` | Water texture + minimap PNG + grid (pre-rendered static cache) |
 | `TeamRosterLayer` | Left panel: both teams with names, kills, damage, HP bars, consumable timers |
 | `CapturePointLayer` | Cap circles with progress arcs, team colors, contested indicators |
-| `SmokeLayer` | Smoke screen radius visualization |
+| `SmokeLayer` | Smoke screen radius visualization with per-puff FIFO lifecycle |
 | `ProjectileLayer` | Shell traces (AP/HE/SAP colored) + torpedo tracks |
-| `AircraftLayer` | CV squadrons + airstrike icons |
+| `AircraftLayer` | CV squadrons + airstrikes + consumable planes with type-specific icons |
 | `ShipLayer` | Rotated ship class icons, player names, team colors, spotted glow, division mate gold icons |
 | `TrailLayer` | Fading ship movement trails |
 | `HealthBarLayer` | Per-ship HP bars + repair party recoverable HP |
@@ -372,6 +372,8 @@ git submodule update --remote wows-gamedata
 ```
 
 No code changes needed — the parser dynamically loads entity definitions from the `.def` files.
+
+With `auto_update_gamedata=True` in `parse_replay()`, the parser will automatically fetch and checkout the matching gamedata tag for the replay's game version.
 
 ---
 
