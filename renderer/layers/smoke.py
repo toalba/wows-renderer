@@ -29,6 +29,7 @@ class SmokeLayer(Layer):
     def initialize(self, ctx: RenderContext) -> None:
         super().initialize(ctx)
         self._puff_cache = self._build_puff_cache()
+        self._puff_lifetime = self._compute_puff_lifetimes()
 
     def _build_puff_cache(
         self,
@@ -91,6 +92,27 @@ class SmokeLayer(Layer):
 
         return cache
 
+    def _compute_puff_lifetimes(self) -> dict[int, float]:
+        """Derive per-puff lifetime for each smoke entity.
+
+        All puffs in a smoke screen share the same individual lifetime.
+        The last puff expires when the entity leaves, so:
+            puff_lifetime = entity_leave_time - last_puff_creation_time
+        """
+        tracker = self.ctx.replay._tracker
+        result: dict[int, float] = {}
+        for eid, puffs in self._puff_cache.items():
+            if not puffs:
+                continue
+            leave_time = tracker._entity_leave_times.get(eid)
+            if leave_time is None:
+                continue
+            last_puff_t = puffs[-1][0]
+            lifetime = leave_time - last_puff_t
+            if lifetime > 0:
+                result[eid] = lifetime
+        return result
+
     def render(self, cr: cairo.Context, state: object, timestamp: float) -> None:
         tracker = getattr(self.ctx.replay, "_tracker", None)
         if tracker is None:
@@ -113,7 +135,7 @@ class SmokeLayer(Layer):
             if puffs[0][0] > timestamp:
                 continue
 
-            # Check if smoke has expired (EntityLeave)
+            # Check if smoke has fully expired (EntityLeave)
             leave_time = tracker._entity_leave_times.get(entity_id)
             if leave_time is not None and leave_time <= timestamp:
                 continue
@@ -121,10 +143,16 @@ class SmokeLayer(Layer):
             # Trap 3: smoke radius is in space_units
             px_radius = radius * self.RADIUS_MULTIPLIER / map_size * mm
 
+            # Per-puff lifetime (FIFO): each puff expires individually
+            puff_life = self._puff_lifetime.get(entity_id)
+
             # Draw each smoke puff that exists at this timestamp
             for puff_t, wx, wz in puffs:
                 if puff_t > timestamp:
                     break  # future puffs not yet laid
+                # Check individual puff expiry
+                if puff_life is not None and timestamp >= puff_t + puff_life:
+                    continue  # this puff has expired
                 px, py = self.ctx.world_to_pixel(wx, wz)
 
                 cr.new_sub_path()
