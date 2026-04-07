@@ -267,7 +267,11 @@ class PlayerHeaderLayer(Layer):
         cr.set_source_rgba(0, 0, 0, 0.8)
         cr.move_to(px + 1, text_y + 1)
         cr.show_text(self._player_name)
-        cr.set_source_rgba(0.95, 0.95, 0.95, 1.0)
+        if self.ctx.division_mates:
+            dr, dg, db, da = self.ctx.config.division_color
+            cr.set_source_rgba(dr, dg, db, da)
+        else:
+            cr.set_source_rgba(0.95, 0.95, 0.95, 1.0)
         cr.move_to(px, text_y)
         cr.show_text(self._player_name)
 

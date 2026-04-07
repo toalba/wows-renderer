@@ -25,10 +25,10 @@ _RIBBON_GROUPS: list[tuple[int, list[int]]] = [
     (1,  []),                        # Torpedo Hit
     (19, []),                        # Detected
     (54, []),                        # Assist
-    (0,  [15, 14, 16, 17]),          # Main Battery Hit → Pen, Overpen, Shatter, Ricochet
+    (0,  [15, 14, 16, 17, 28]),      # Main Battery Hit → Pen, Overpen, Shatter, Ricochet, Bulge
     (13, []),                        # Secondary Hit
-    (2,  [21, 20, 22, 23]),          # Bomb Hit → Pen, Overpen, Shatter, Ricochet
-    (24, [25, 35, 26, 34]),          # Rocket Hit → Pen, Overpen, Shatter, Ricochet
+    (2,  [21, 20, 22, 23, 29]),      # Bomb Hit → Pen, Overpen, Shatter, Ricochet, Bulge
+    (24, [25, 35, 26, 34, 30]),      # Rocket Hit → Pen, Overpen, Shatter, Ricochet, Bulge
     (3,  []),                        # Plane Shot Down
     (10, []),                        # Base Capture
     (11, []),                        # Capture Assist
@@ -37,65 +37,49 @@ _RIBBON_GROUPS: list[tuple[int, list[int]]] = [
     (18, []),                        # Building Destroyed
 ]
 
-_SUB_RIBBON_IDS = {14, 15, 16, 17, 20, 21, 22, 23, 25, 26, 34, 35}
+_SUB_RIBBON_IDS = {14, 15, 16, 17, 20, 21, 22, 23, 25, 26, 28, 29, 30, 34, 35}
 
 # Sub-ribbon → parent ribbon
 _SUB_TO_PARENT: dict[int, int] = {
-    14: 0, 15: 0, 16: 0, 17: 0,
-    20: 2, 21: 2, 22: 2, 23: 2,
-    25: 24, 26: 24, 34: 24, 35: 24,
+    14: 0, 15: 0, 16: 0, 17: 0, 28: 0,
+    20: 2, 21: 2, 22: 2, 23: 2, 29: 2,
+    25: 24, 26: 24, 34: 24, 35: 24, 30: 24,
 }
 
 # Parent → ordered list of sub-ribbon IDs
 _PARENT_SUBS: dict[int, list[int]] = {
-    0:  [15, 14, 16, 17],
-    2:  [21, 20, 22, 23],
-    24: [25, 35, 26, 34],
+    0:  [15, 14, 16, 17, 28],
+    2:  [21, 20, 22, 23, 29],
+    24: [25, 35, 26, 34, 30],
 }
 
-# Icon file paths relative to gui/ dir
-_ICON_PATHS: dict[int, str] = {
-    0:  "ribbons/ribbon_main_caliber.png",
-    1:  "ribbons/ribbon_torpedo.png",
-    2:  "ribbons/ribbon_bomb.png",
-    3:  "ribbons/ribbon_plane.png",
-    4:  "ribbons/ribbon_crit.png",
-    5:  "ribbons/ribbon_frag.png",
-    6:  "ribbons/ribbon_burn.png",
-    7:  "ribbons/ribbon_flood.png",
-    8:  "ribbons/ribbon_citadel.png",
-    9:  "ribbons/ribbon_base_defense.png",
-    10: "ribbons/ribbon_base_capture.png",
-    11: "ribbons/ribbon_base_capture_assist.png",
-    12: "ribbons/ribbon_suppressed.png",
-    13: "ribbons/ribbon_secondary_caliber.png",
-    14: "ribbons/subribbons/subribbon_main_caliber_over_penetration.png",
-    15: "ribbons/subribbons/subribbon_main_caliber_penetration.png",
-    16: "ribbons/subribbons/subribbon_main_caliber_no_penetration.png",
-    17: "ribbons/subribbons/subribbon_main_caliber_ricochet.png",
-    18: "ribbons/ribbon_building_kill.png",
-    19: "ribbons/ribbon_detected.png",
-    54: "ribbons/ribbon_assist.png",
-    # Bomb sub-ribbons
-    20: "ribbons/subribbons/subribbon_bomb_over_penetration.png",
-    21: "ribbons/subribbons/subribbon_bomb_penetration.png",
-    22: "ribbons/subribbons/subribbon_bomb_no_penetration.png",
-    23: "ribbons/subribbons/subribbon_bomb_ricochet.png",
-    # Rocket sub-ribbons
-    25: "ribbons/subribbons/subribbon_rocket_penetration.png",
-    26: "ribbons/subribbons/subribbon_rocket_no_penetration.png",
-    34: "ribbons/subribbons/subribbon_rocket_ricochet.png",
-    35: "ribbons/subribbons/subribbon_rocket_over_penetration.png",
-}
+def _build_icon_paths(gui_dir: Path) -> dict[int, str]:
+    """Derive icon paths from parser ribbon names, checking both directories.
 
-# Fallback labels
-_RIBBON_LABELS: dict[int, str] = {
-    0: "HIT", 1: "TORP", 2: "BOMB", 3: "PLANE", 4: "CRIT",
-    5: "FRAG", 6: "FIRE", 7: "FLOOD", 8: "CITADEL", 9: "DEF",
-    10: "CAP", 11: "ASSIST", 12: "SUPP", 13: "SEC",
-    14: "OVERPEN", 15: "PEN", 16: "SHATTER", 17: "RICOCHET",
-    18: "BUILDING", 19: "SPOTTED", 54: "ASSIST",
-}
+    Tries ribbons/ribbon_{name}.png first, then ribbons/subribbons/subribbon_{name}.png.
+    """
+    from wows_replay_parser.ribbons import RIBBON_WIRE_IDS
+
+    paths: dict[int, str] = {}
+    for rid, name in RIBBON_WIRE_IDS.items():
+        fname = name.lower()
+        candidates = [
+            f"ribbons/ribbon_{fname}.png",
+            f"ribbons/subribbons/subribbon_{fname}.png",
+        ]
+        if rid in _SUB_RIBBON_IDS:
+            candidates.reverse()
+        for rel in candidates:
+            if (gui_dir / rel).exists():
+                paths[rid] = rel
+                break
+    return paths
+
+def _build_ribbon_labels() -> dict[int, str]:
+    """Derive short fallback labels from parser ribbon names."""
+    from wows_replay_parser.ribbons import RIBBON_WIRE_IDS
+
+    return {rid: name.replace("_", " ")[:8] for rid, name in RIBBON_WIRE_IDS.items()}
 
 
 class RibbonLayer(Layer):
@@ -137,7 +121,9 @@ class RibbonLayer(Layer):
         # Load icons
         gui_dir = Path(ctx.config.gamedata_path) / "gui"
         self._icons: dict[int, cairo.ImageSurface] = {}
-        for rid, rel_path in _ICON_PATHS.items():
+        icon_paths = _build_icon_paths(gui_dir)
+        self._labels = _build_ribbon_labels()
+        for rid, rel_path in icon_paths.items():
             path = gui_dir / rel_path
             if path.exists():
                 try:
@@ -256,7 +242,7 @@ class RibbonLayer(Layer):
             cr.restore()
         else:
             # Fallback rectangle
-            label = _RIBBON_LABELS.get(rid, "?")
+            label = self._labels.get(rid, "?")
             draw_w = height * 2.5
             cr.set_source_rgba(0.3, 0.3, 0.3, 0.6)
             cr.rectangle(x, y, draw_w, height)

@@ -94,7 +94,6 @@ wows-minimap-renderer/
 - Self-player typed damage breakdown (AP/HE/SAP/torp/fire/flood/secondary) via DamageReceivedStatEvent
 
 ### Known Issues
-- Aircraft airstrike team_id not always correct (parser fix in progress)
 - Ribbon derive_ribbons() has a bug (RIBBON_NAMES dict inverted) — using extract_recording_player_ribbons() instead
 
 ## Dependencies
@@ -365,7 +364,7 @@ uv pip install "wows-replay-parser @ git+ssh://git@github.com/toalba/wows-replay
 1. ~~Discord bot (`bot/`) — slash commands, file upload, render worker~~ DONE
 2. CLI implementation (`renderer/cli.py`)
 3. LICENSE file (Apache 2.0, WG copyright)
-4. Fix aircraft airstrike team_id (parser fix in progress)
+4. ~~Fix aircraft airstrike team_id~~ DONE (parser commit e335703)
 5. ~~Per-player damage type breakdown~~ DONE for self player; NOT POSSIBLE for other players (game protocol limitation)
 6. Visual polish + edge case handling
 
