@@ -142,12 +142,14 @@ class KillfeedLayer(Layer):
             victim_name = victim.name if victim else "?"
 
             if killer and hasattr(killer, "team_id"):
-                kr, kg, kb, _ = config.team_colors.get(killer.team_id, (1, 1, 1, 1))
+                display_team = self.ctx.raw_to_display_team(killer.team_id)
+                kr, kg, kb, _ = config.team_colors.get(display_team, (1, 1, 1, 1))
             else:
                 kr, kg, kb = 1, 1, 1
 
             if victim and hasattr(victim, "team_id"):
-                vr, vg, vb, _ = config.team_colors.get(victim.team_id, (1, 1, 1, 1))
+                display_team = self.ctx.raw_to_display_team(victim.team_id)
+                vr, vg, vb, _ = config.team_colors.get(display_team, (1, 1, 1, 1))
             else:
                 vr, vg, vb = 1, 1, 1
 

@@ -63,11 +63,8 @@ class AircraftLayer(Layer):
             px, py = self.ctx.world_to_pixel(ac.x, ac.z)
 
             # Determine team variant
-            player_team = self.ctx._self_team_raw
-            if ac.team_id == player_team:
-                variant = "ally"
-            else:
-                variant = "enemy"
+            display_team = self.ctx.raw_to_display_team(ac.team_id)
+            variant = "ally" if display_team == 0 else "enemy"
 
             sq_type = ac.squadron_type or "controllable"
             icon = self._icons.get((sq_type, variant))
@@ -95,10 +92,10 @@ class AircraftLayer(Layer):
     def _draw_fallback(self, cr, px, py, variant):
         """Small diamond marker as fallback."""
         s = 5.0 * self.ctx.scale
-        if variant == "enemy":
-            cr.set_source_rgba(1.0, 0.3, 0.3, 0.8)
-        else:
-            cr.set_source_rgba(0.3, 0.8, 0.3, 0.8)
+        team_colors = self.ctx.config.team_colors
+        display_team = 1 if variant == "enemy" else 0
+        r, g, b, _ = team_colors.get(display_team, (0.5, 0.5, 0.5, 0.8))
+        cr.set_source_rgba(r, g, b, 0.8)
 
         cr.save()
         cr.translate(px, py)

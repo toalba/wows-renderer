@@ -47,7 +47,8 @@ class TrailLayer(Layer):
             if player.relation == 0:
                 r, g, b, _ = ctx.config.self_color
             else:
-                c = ctx.config.team_colors.get(player.team_id, (0.5, 0.5, 0.5, 1.0))
+                display_team = ctx.raw_to_display_team(player.team_id)
+                c = ctx.config.team_colors.get(display_team, (0.5, 0.5, 0.5, 1.0))
                 r, g, b = c[0], c[1], c[2]
             self._trail_colors[entity_id] = (r, g, b)
 

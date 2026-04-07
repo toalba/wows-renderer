@@ -194,7 +194,7 @@ class ShipLayer(Layer):
             else:
                 # Dead ship
                 if icon_set and "sunk" in icon_set:
-                    self._draw_icon(cr, px, py, 0.0, icon_set["sunk"], 0.5)
+                    self._draw_icon(cr, px, py, heading, icon_set["sunk"], 0.5)
                 else:
                     self._draw_dead_marker(cr, px, py, team_color)
 

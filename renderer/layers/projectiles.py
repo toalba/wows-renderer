@@ -136,6 +136,7 @@ class ProjectileLayer(Layer):
         # Build torpedo data
         torp_events = replay.events_of_type(TorpedoCreatedEvent)
         torps: list[dict] = []
+        torp_display_teams: list[int] = []
         for evt in torp_events:
             speed = math.sqrt(evt.direction_x**2 + evt.direction_z**2)
             if speed < 1.0:
@@ -169,9 +170,19 @@ class ProjectileLayer(Layer):
                 "initial_yaw": initial_yaw,
                 "maneuver": maneuver,
             })
-        torps.sort(key=lambda t: t["start_t"])
-        self._torp_data = torps
-        self._torp_start_times = [t["start_t"] for t in torps]
+
+            # Determine display team for torpedo color
+            owner = ctx.player_lookup.get(evt.owner_id)
+            if owner:
+                torp_display_teams.append(ctx.raw_to_display_team(owner.team_id))
+            else:
+                torp_display_teams.append(1)  # unknown owner → enemy
+
+        # Sort torpedoes by start time, keep display teams in sync
+        order = sorted(range(len(torps)), key=lambda i: torps[i]["start_t"])
+        self._torp_data = [torps[i] for i in order]
+        self._torp_display_teams = [torp_display_teams[i] for i in order]
+        self._torp_start_times = [t["start_t"] for t in self._torp_data]
         self._torp_cursor = 0
 
     def render(self, cr: cairo.Context, state: object, timestamp: float) -> None:
@@ -227,9 +238,10 @@ class ProjectileLayer(Layer):
                 cr.line_to(hpx, hpy)
             cr.stroke()
 
-        # ── Torpedoes ───────────────────────────────────────────
+        # ── Torpedoes (grouped by team) ────────────────────────
         hi_t = bisect_right(self._torp_start_times, timestamp)
-        torp_positions: list[tuple[float, float]] = []
+        # Group positions by display team for batched rendering
+        torp_by_team: dict[int, list[tuple[float, float]]] = {0: [], 1: []}
 
         for i in range(self._torp_cursor, hi_t):
             torp = self._torp_data[i]
@@ -242,13 +254,18 @@ class ProjectileLayer(Layer):
             wx, wz = self._interpolate_torpedo(torp, elapsed)
             if abs(wx) > half or abs(wz) > half:
                 continue
-            torp_positions.append(w2p(wx, wz))
+            display_team = self._torp_display_teams[i]
+            torp_by_team[display_team].append(w2p(wx, wz))
 
-        if torp_positions:
-            cr.set_source_rgba(0.3, 0.9, 0.3, 0.8)
-            radius = self.TORPEDO_RADIUS
-            two_pi = 2 * math.pi
-            for px, py in torp_positions:
+        radius = self.TORPEDO_RADIUS
+        two_pi = 2 * math.pi
+        team_colors = self.ctx.config.team_colors
+        for display_team, positions in torp_by_team.items():
+            if not positions:
+                continue
+            tr, tg, tb, ta = team_colors.get(display_team, (0.3, 0.9, 0.3, 0.8))
+            cr.set_source_rgba(tr, tg, tb, 0.8)
+            for px, py in positions:
                 cr.new_sub_path()
                 cr.arc(px, py, radius, 0, two_pi)
             cr.fill()

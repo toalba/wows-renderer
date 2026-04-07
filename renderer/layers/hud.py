@@ -104,7 +104,7 @@ class HudLayer(Layer):
             if ship.is_alive:
                 player = player_lookup.get(entity_id)
                 if player:
-                    team = player.team_id
+                    team = self.ctx.raw_to_display_team(player.team_id)
                 else:
                     team = 0
                 if team in alive:
