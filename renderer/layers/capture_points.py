@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 
 import cairo
 
@@ -41,6 +43,11 @@ class CapturePointLayer(Layer):
         # This only determines the A/B/C/D letter mapping, not visibility.
         self._cap_label_order: list[int] = []
         self._build_label_order(ctx)
+        # Buff icons and zone→paramsId mapping for Arms Race
+        self._buff_icons: dict[str, cairo.ImageSurface] = {}
+        self._buff_drops: dict[int, str] = {}  # paramsId -> marker name
+        self._zone_buff_type: dict[int, str] = {}  # zone_eid -> marker name
+        self._load_buff_data(ctx)
 
     def _build_label_order(self, ctx: RenderContext) -> None:
         """Assign cap letters by scanning states at a few timestamps."""
@@ -65,6 +72,64 @@ class CapturePointLayer(Layer):
         # Sort by point_index first, then x position
         self._cap_label_order = sorted(seen, key=lambda e: (seen[e][1], seen[e][0]))
 
+    def _load_buff_data(self, ctx: RenderContext) -> None:
+        """Load buff drop icons and build zone → buff type mapping."""
+        gamedata = Path(ctx.config.gamedata_path)
+
+        # Load paramsId → marker name from buff_drops.json
+        drops_path = gamedata / "buff_drops.json"
+        if drops_path.exists():
+            try:
+                data = json.loads(drops_path.read_text(encoding="utf-8"))
+                self._buff_drops = {int(k): v for k, v in data.items()}
+            except Exception:
+                pass
+
+        # Load buff marker icons from gui/powerups/drops/
+        icon_dir = gamedata / "gui" / "powerups" / "drops"
+        if icon_dir.exists():
+            for png in icon_dir.glob("icon_marker_*_small.png"):
+                # icon_marker_health_active_small.png → health_active
+                name = png.stem.removeprefix("icon_marker_").removesuffix("_small")
+                try:
+                    self._buff_icons[name] = cairo.ImageSurface.create_from_png(str(png))
+                except Exception:
+                    pass
+
+        # Build zone_eid → marker name from BattleLogic state property history.
+        # Each change to the BattleLogic 'state' property includes drop.data
+        # with active buff zones and their paramsIds.
+        tracker = ctx.replay._tracker
+        bl_eid = next(
+            (eid for eid, t in tracker._entity_types.items() if t == "BattleLogic"),
+            None,
+        )
+        if bl_eid is None or not self._buff_drops:
+            return
+
+        for change in tracker._history:
+            if change.entity_id != bl_eid or change.property_name != "state":
+                continue
+            # Check both old_value (catches initial state) and new_value
+            for val in (change.old_value, change.new_value):
+                if not isinstance(val, dict):
+                    continue
+                drop = val.get("drop")
+                if not isinstance(drop, dict):
+                    continue
+                data = drop.get("data", [])
+                if not isinstance(data, list):
+                    continue
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
+                    zid = item.get("zoneId", 0)
+                    pid = item.get("paramsId", 0)
+                    if zid and pid and zid not in self._zone_buff_type:
+                        marker = self._buff_drops.get(pid, "")
+                        if marker:
+                            self._zone_buff_type[zid] = marker
+
     def _get_zone_type(self, tracker, eid: int) -> int:
         """Get InteractiveZone type property (0 if unknown)."""
         props = tracker._current.get(eid, {})
@@ -77,11 +142,6 @@ class CapturePointLayer(Layer):
         map_size = self.ctx.map_size
         mm = config.minimap_size
 
-        cap_states = {}
-        for cap in state.battle.capture_points:
-            cap_states[cap.entity_id] = cap
-
-        # Collect all renderable zones from current state
         rendered_caps: list[int] = []
 
         for cap in state.battle.capture_points:
@@ -109,8 +169,8 @@ class CapturePointLayer(Layer):
             radius_world = cap.radius if cap.radius > 0 else self.DEFAULT_RADIUS
 
             if zone_type == 6:
-                # Buff pickup — small marker
-                self._render_buff(cr, px, py, cap, team_colors)
+                # Buff pickup — icon or diamond marker
+                self._render_buff(cr, px, py, eid, cap, team_colors)
                 continue
 
             # Don't render capture zones that aren't active yet (e.g. Arms Race
@@ -199,27 +259,40 @@ class CapturePointLayer(Layer):
 
     def _render_buff(
         self, cr: cairo.Context, px: float, py: float,
-        cap, team_colors: dict,
+        eid: int, cap, team_colors: dict,
     ) -> None:
-        """Render a buff pickup zone as a small diamond marker."""
+        """Render a buff pickup zone with icon or diamond fallback."""
         s = self.ctx.scale
-        size = self.BUFF_RADIUS_PX * s
 
-        # Neutral color for uncollected buffs
-        r, g, b = self.NEUTRAL_COLOR
-        if cap.team_id >= 0:
-            display_team = self.ctx.raw_to_display_team(cap.team_id)
-            if display_team in team_colors:
-                r, g, b, _ = team_colors[display_team]
+        # Try to render buff icon
+        marker = self._zone_buff_type.get(eid, "")
+        icon = self._buff_icons.get(marker) if marker else None
 
-        # Diamond shape
-        cr.save()
-        cr.translate(px, py)
-        cr.rotate(math.pi / 4)
-        cr.rectangle(-size, -size, size * 2, size * 2)
-        cr.set_source_rgba(r, g, b, self.BUFF_ALPHA)
-        cr.fill_preserve()
-        cr.set_source_rgba(r, g, b, self.BUFF_BORDER_ALPHA)
-        cr.set_line_width(1.5 * s)
-        cr.stroke()
-        cr.restore()
+        if icon:
+            w = icon.get_width()
+            h = icon.get_height()
+            icon_scale = s * 0.9
+            cr.save()
+            cr.translate(px, py)
+            cr.scale(icon_scale, icon_scale)
+            cr.set_source_surface(icon, -w / 2, -h / 2)
+            cr.paint()
+            cr.restore()
+        else:
+            # Diamond fallback
+            size = self.BUFF_RADIUS_PX * s
+            r, g, b = self.NEUTRAL_COLOR
+            if cap.team_id >= 0:
+                display_team = self.ctx.raw_to_display_team(cap.team_id)
+                if display_team in team_colors:
+                    r, g, b, _ = team_colors[display_team]
+            cr.save()
+            cr.translate(px, py)
+            cr.rotate(math.pi / 4)
+            cr.rectangle(-size, -size, size * 2, size * 2)
+            cr.set_source_rgba(r, g, b, self.BUFF_ALPHA)
+            cr.fill_preserve()
+            cr.set_source_rgba(r, g, b, self.BUFF_BORDER_ALPHA)
+            cr.set_line_width(1.5 * s)
+            cr.stroke()
+            cr.restore()
