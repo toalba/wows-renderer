@@ -50,6 +50,7 @@ def render_replay(
     from renderer.layers.health_bars import HealthBarLayer
     from renderer.layers.consumables import ConsumableLayer
     from renderer.layers.smoke import SmokeLayer
+    from renderer.layers.weather import WeatherLayer
     from renderer.layers.aircraft import AircraftLayer
     from renderer.layers.team_roster import TeamRosterLayer
     from renderer.layers.right_panel import RightPanelLayer
@@ -90,16 +91,17 @@ def render_replay(
 
     # Common map layers (all presets)
     map_layers = [
-        MapBackgroundLayer(), CapturePointLayer(), SmokeLayer(),
-        ProjectileLayer(), AircraftLayer(), ShipLayer(),
+        MapBackgroundLayer(), CapturePointLayer(), WeatherLayer(),
+        SmokeLayer(), ProjectileLayer(), AircraftLayer(), ShipLayer(),
         HealthBarLayer(), ConsumableLayer(), HudLayer(),
     ]
 
     if preset == "full":
         layers = [
             MapBackgroundLayer(), TeamRosterLayer(), CapturePointLayer(),
-            SmokeLayer(), ProjectileLayer(), AircraftLayer(), ShipLayer(),
-            HealthBarLayer(), ConsumableLayer(), RightPanelLayer(), HudLayer(),
+            WeatherLayer(), SmokeLayer(), ProjectileLayer(), AircraftLayer(),
+            ShipLayer(), HealthBarLayer(), ConsumableLayer(),
+            RightPanelLayer(), HudLayer(),
         ]
     elif preset == "map":
         layers = map_layers

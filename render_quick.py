@@ -11,6 +11,7 @@ from renderer.layers.capture_points import CapturePointLayer
 from renderer.layers.health_bars import HealthBarLayer
 from renderer.layers.consumables import ConsumableLayer
 from renderer.layers.smoke import SmokeLayer
+from renderer.layers.weather import WeatherLayer
 from renderer.layers.aircraft import AircraftLayer
 from renderer.layers.team_roster import TeamRosterLayer
 from renderer.layers.right_panel import RightPanelLayer
@@ -25,7 +26,7 @@ print(f"Parsed: {replay.map_name}, {replay.duration:.0f}s, {len(replay.players)}
 
 config = RenderConfig(gamedata_path=GAMEDATA, speed=20.0, fps=20, minimap_size=1080, panel_width=420)
 renderer = MinimapRenderer(config)
-for L in [MapBackgroundLayer(), TeamRosterLayer(), CapturePointLayer(), SmokeLayer(), ProjectileLayer(),
+for L in [MapBackgroundLayer(), TeamRosterLayer(), CapturePointLayer(), WeatherLayer(), SmokeLayer(), ProjectileLayer(),
           AircraftLayer(), ShipLayer(), HealthBarLayer(), ConsumableLayer(), RightPanelLayer(), HudLayer()]:
     renderer.add_layer(L)
 

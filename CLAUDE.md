@@ -371,8 +371,25 @@ uv pip install "wows-replay-parser @ git+ssh://git@github.com/toalba/wows-replay
 6. ~~Visual polish + edge case handling~~ DONE (visibility, smoke lifecycle, aircraft icons, SVG ship icons)
 
 ### Nice-to-have (P2)
-7. Dual perspective merge
+7. Dual perspective merge — parser `merge.py` is complete, renderer integration not started
 8. ~~Version-awareness for gamedata~~ DONE (gamedata_sync auto-checkouts matching tag)
+
+### Toolkit-inspired features (P2)
+Compared against wows-toolkit 0.1.65 renderer (2026-04-07). Items where toolkit is ahead.
+
+9. **Buildings layer** — 8 building types (Airbase, AA, Artillery, Generator, Radar, Station, Supply, Tower) with relation-state icons. Parser already tracks `BuildingState` in `state.buildings`. Need new `BuildingLayer` + icon loading from `gui/game_map_markers/{type}_{relation}.png`.
+10. **Detection radius per-type coloring** — Per-type colors are defined in `consumables.py` (lines 14-22) but overridden by team colors at lines 162-165. Fix: use the defined per-type colors (radar=red, hydro=teal, hydrophone=blue, sub surveillance=purple) instead of blanket team colors.
+11. **Team advantage scoring** — Replace "1 KILL DECIDES" with 3-factor model: Score Projection (0-10: score gap + TTW + projected final), Fleet Power (0-10: class-weighted HP with DD=1.5, SS=1.3, CV=1.2, CL/BB=1.0), Strategic Threat (0-5: DD/SS survival + class diversity + CV advantage). Levels: Even (<1), Weak (≥1), Moderate (≥3), Strong (≥6), Absolute (≥10). Full algorithm in `wows-toolkit/docs/TEAM_ADVANTAGE_SCORING.md`. Pure math, no new data deps — needs ship class + HP + cap income from existing state.
+12. ~~**Weather zone overlay**~~ DONE — `weather.py` layer draws white semi-transparent circles from `GameState.weather_zones`. Parser tracks InteractiveZone type==5 entities with position + radius.
+13. ~~**Turret direction indicator**~~ DONE — `ships.py` now prefers actual turret yaw from `ShipState.turret_yaws` (lowest gun_id = forward turret) over `targetLocalPos` aim direction for non-self ships. Parser accumulates syncGun weapon_type==0 yaw per entity.
+14. **Frame dump / thumbnail** — Skip FFmpeg, write single Cairo surface to PNG for a given timestamp. Useful for Discord embed previews. Very low effort.
+
+### Future backlog (P3)
+Low priority, noted for reference. Not worth building now.
+- Trail coloring (rainbow / speed-based) — toolkit has it, minor visual upgrade
+- Pre-battle countdown timer — trivial, low value
+- Chat overlay layer — parser has ChatEvent, just needs a layer
+- Armament color indicator — ammo type icon tinting, needs SetAmmoForWeapon in state tracker
 
 ## Damage Breakdown
 

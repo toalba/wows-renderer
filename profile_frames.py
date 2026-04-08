@@ -22,6 +22,7 @@ from renderer.layers.capture_points import CapturePointLayer
 from renderer.layers.health_bars import HealthBarLayer
 from renderer.layers.consumables import ConsumableLayer
 from renderer.layers.smoke import SmokeLayer
+from renderer.layers.weather import WeatherLayer
 from renderer.layers.aircraft import AircraftLayer
 from renderer.layers.team_roster import TeamRosterLayer
 from renderer.layers.right_panel import RightPanelLayer
@@ -45,6 +46,7 @@ layers = [
     ("map_bg", MapBackgroundLayer()),
     ("team_roster", TeamRosterLayer()),
     ("capture_points", CapturePointLayer()),
+    ("weather", WeatherLayer()),
     ("smoke", SmokeLayer()),
     ("projectiles", ProjectileLayer()),
     ("aircraft", AircraftLayer()),
