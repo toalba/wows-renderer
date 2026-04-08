@@ -184,13 +184,9 @@ class ShipLayer(Layer):
                     if look_yaw is not None:
                         self._draw_heading_line(cr, px, py, look_yaw, team_color, alpha_mult)
                 elif is_detected:
-                    if ship.turret_yaws:
-                        gun_yaw = ship.turret_yaws[min(ship.turret_yaws)]
-                        self._draw_heading_line(cr, px, py, gun_yaw, team_color, alpha_mult)
-                    else:
-                        target_yaw = self._get_target_yaw(entity_id, timestamp)
-                        if target_yaw is not None:
-                            self._draw_heading_line(cr, px, py, target_yaw, team_color, alpha_mult)
+                    target_yaw = self._get_target_yaw(entity_id, timestamp)
+                    if target_yaw is not None:
+                        self._draw_heading_line(cr, px, py, target_yaw, team_color, alpha_mult)
 
                 # Player name
                 if player and is_detected:
