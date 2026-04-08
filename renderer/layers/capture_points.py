@@ -270,6 +270,26 @@ class CapturePointLayer(Layer):
                 font_size=self.LABEL_FONT_SIZE * s, bold=True, outline_width=3.5 * s,
             )
 
+        # Render buff pickup zones (type==6, now in state.buff_zones)
+        self._render_buff_zones(cr, state, timestamp, team_colors)
+
+    def _render_buff_zones(
+        self, cr: cairo.Context, state: object, timestamp: float,
+        team_colors: dict,
+    ) -> None:
+        """Render buff pickup zones from GameState.buff_zones."""
+        tracker = self.ctx.replay.tracker
+        for eid, bz in state.buff_zones.items():
+            leave_time = tracker.get_entity_leave_time(eid)
+            if leave_time is not None and timestamp >= leave_time:
+                continue
+            pos = tracker.position_at(eid, timestamp)
+            if pos is None:
+                continue
+            wx, _, wz = pos
+            px, py = self.ctx.world_to_pixel(wx, wz)
+            self._render_buff(cr, px, py, eid, bz, team_colors)
+
     def _render_buff(
         self, cr: cairo.Context, px: float, py: float,
         eid: int, cap, team_colors: dict,
@@ -295,7 +315,7 @@ class CapturePointLayer(Layer):
             # Diamond fallback
             size = self.BUFF_RADIUS_PX * s
             r, g, b = self.NEUTRAL_COLOR
-            if cap.team_id >= 0:
+            if getattr(cap, "team_id", -1) >= 0:
                 display_team = self.ctx.raw_to_display_team(cap.team_id)
                 if display_team in team_colors:
                     r, g, b, _ = team_colors[display_team]
