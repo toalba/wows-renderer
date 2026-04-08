@@ -22,10 +22,29 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
 log = logging.getLogger(__name__)
+
+
+def _is_git_tracked(path: Path) -> bool:
+    """Check if a file lives inside a git repo and is tracked.
+
+    If True, we must NOT write to it — that would dirty the repo
+    and block gamedata_sync from switching versions via git checkout.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", str(path.name)],
+            cwd=path.parent,
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
 
 
 def resolve_json_cache(
@@ -68,10 +87,17 @@ def resolve_json_cache(
     log.info("Rebuilding %s from %s", json_path.name, source_dir)
     data = builder(source_dir)
 
-    # Write cache for next time
-    try:
-        json_path.write_text(json.dumps(data, separators=(",", ":")), encoding=encoding)
-    except OSError as e:
-        log.warning("Failed to write cache %s: %s", json_path.name, e)
+    # Write cache for next time — but only if the file isn't git-tracked.
+    # Writing to a tracked file would dirty the gamedata repo and block
+    # gamedata_sync from switching versions via git checkout.
+    if not _is_git_tracked(json_path):
+        try:
+            json_path.write_text(
+                json.dumps(data, separators=(",", ":")), encoding=encoding,
+            )
+        except OSError as e:
+            log.warning("Failed to write cache %s: %s", json_path.name, e)
+    else:
+        log.debug("Skipping cache write for git-tracked %s", json_path.name)
 
     return data
