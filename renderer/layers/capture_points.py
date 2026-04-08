@@ -6,7 +6,25 @@ from pathlib import Path
 
 import cairo
 
+from renderer.gamedata_resolver import resolve_json_cache
 from renderer.layers.base import Layer, RenderContext, FONT_FAMILY
+
+
+def _build_buff_drops(source_dir: Path) -> dict:
+    """Scan split/Drop/*.json for paramsId → markerNameActive mapping."""
+    result = {}
+    for f in source_dir.iterdir():
+        if f.suffix != ".json":
+            continue
+        try:
+            data = json.loads(f.read_text())
+            params_id = data.get("id")
+            marker = data.get("markerNameActive", "")
+            if params_id is not None and marker:
+                result[str(params_id)] = marker
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return result
 
 
 class CapturePointLayer(Layer):
@@ -51,7 +69,7 @@ class CapturePointLayer(Layer):
 
     def _build_label_order(self, ctx: RenderContext) -> None:
         """Assign cap letters by scanning states at a few timestamps."""
-        tracker = ctx.replay._tracker
+        tracker = ctx.replay.tracker
         seen: dict[int, tuple[float, int]] = {}  # eid -> (x_pos, point_index)
 
         for t in (10.0, 30.0, 60.0, 300.0, 600.0):
@@ -76,14 +94,13 @@ class CapturePointLayer(Layer):
         """Load buff drop icons and build zone → buff type mapping."""
         gamedata = Path(ctx.config.gamedata_path)
 
-        # Load paramsId → marker name from buff_drops.json
-        drops_path = gamedata / "buff_drops.json"
-        if drops_path.exists():
-            try:
-                data = json.loads(drops_path.read_text(encoding="utf-8"))
-                self._buff_drops = {int(k): v for k, v in data.items()}
-            except Exception:
-                pass
+        # Load paramsId → marker name via resolver (buff_drops.json cache, split/Drop/ source)
+        drops_data = resolve_json_cache(
+            gamedata / "buff_drops.json",
+            gamedata / "split" / "Drop",
+            _build_buff_drops,
+        )
+        self._buff_drops = {int(k): v for k, v in drops_data.items()}
 
         # Load buff marker icons from gui/powerups/drops/
         icon_dir = gamedata / "gui" / "powerups" / "drops"
@@ -99,17 +116,13 @@ class CapturePointLayer(Layer):
         # Build zone_eid → marker name from BattleLogic state property history.
         # Each change to the BattleLogic 'state' property includes drop.data
         # with active buff zones and their paramsIds.
-        tracker = ctx.replay._tracker
-        bl_eid = next(
-            (eid for eid, t in tracker._entity_types.items() if t == "BattleLogic"),
-            None,
-        )
+        tracker = ctx.replay.tracker
+        bl_eids = tracker.get_entities_by_type("BattleLogic")
+        bl_eid = bl_eids[0] if bl_eids else None
         if bl_eid is None or not self._buff_drops:
             return
 
-        for change in tracker._history:
-            if change.entity_id != bl_eid or change.property_name != "state":
-                continue
+        for change in tracker.property_history(bl_eid, "state"):
             # Check both old_value (catches initial state) and new_value
             for val in (change.old_value, change.new_value):
                 if not isinstance(val, dict):
@@ -132,13 +145,13 @@ class CapturePointLayer(Layer):
 
     def _get_zone_type(self, tracker, eid: int) -> int:
         """Get InteractiveZone type property (0 if unknown)."""
-        props = tracker._current.get(eid, {})
+        props = tracker.get_entity_props(eid)
         return int(props.get("type", 0))
 
     def render(self, cr: cairo.Context, state: object, timestamp: float) -> None:
         config = self.ctx.config
         team_colors = config.team_colors
-        tracker = self.ctx.replay._tracker
+        tracker = self.ctx.replay.tracker
         map_size = self.ctx.map_size
         mm = config.minimap_size
 
@@ -154,7 +167,7 @@ class CapturePointLayer(Layer):
 
             # Skip entities that have left the game (collected buffs, expired zones).
             # The tracker doesn't remove InteractiveZones from state after EntityLeave.
-            leave_time = tracker._entity_leave_times.get(eid)
+            leave_time = tracker.get_entity_leave_time(eid)
             if leave_time is not None and timestamp >= leave_time:
                 continue
 

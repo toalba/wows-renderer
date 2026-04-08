@@ -84,11 +84,10 @@ for name, layer in layers:
 # Compute timestamps (same logic as core.py)
 start = config.start_time
 if start == 0:
-    tracker = replay._tracker
-    for change in tracker._history:
-        if change.property_name == "battleStage" and change.new_value == 0:
-            start = max(0.0, change.timestamp - 10.0)
-            break
+    tracker = replay.tracker
+    battle_start = tracker.battle_start_time
+    if battle_start is not None:
+        start = max(0.0, battle_start - 10.0)
 end = config.end_time if config.end_time is not None else replay.duration
 dt = config.speed / config.fps
 

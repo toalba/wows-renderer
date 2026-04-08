@@ -75,11 +75,11 @@ class RenderContext:
         before position packets, so this avoids the 1-second gap where an enemy
         is spotted but has no position data yet.
         """
-        tracker = getattr(self.replay, "_tracker", None)
+        tracker = self.replay.tracker
         if tracker is None:
             return {}
-        positions = getattr(tracker, "_positions", {})
-        minimap = getattr(tracker, "_minimap_positions", {})
+        positions = tracker.positions_dict
+        minimap = tracker.minimap_positions_dict
         result: dict[int, float] = {}
 
         for entity_id, pos_list in positions.items():

@@ -93,24 +93,7 @@ class RibbonLayer(Layer):
     def initialize(self, ctx: RenderContext) -> None:
         super().initialize(ctx)
 
-        from wows_replay_parser.ribbons import extract_recording_player_ribbons
-
-        tracker = getattr(ctx.replay, "_tracker", None)
-        if tracker is None:
-            self._timeline = []
-            return
-
-        avatar_id = None
-        for change in tracker._history:
-            if change.property_name == "privateVehicleState":
-                avatar_id = change.entity_id
-                break
-
-        if avatar_id is None:
-            self._timeline = []
-            return
-
-        raw = extract_recording_player_ribbons(tracker._history, avatar_id)
+        raw = ctx.replay.recording_player_ribbons()
         self._timeline: list[tuple[float, int]] = [
             (r.timestamp, r.ribbon_id) for r in raw
         ]

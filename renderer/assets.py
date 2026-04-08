@@ -4,6 +4,9 @@ import logging
 import struct
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
+
+from renderer.gamedata_resolver import resolve_json_cache
 
 log = logging.getLogger(__name__)
 
@@ -86,30 +89,48 @@ def load_minimap_water(gamedata_path: Path, map_name: str) -> cairo.ImageSurface
 _ships_db: dict[int, dict] | None = None
 
 
+def _build_ships(source_dir: Path) -> dict[str, Any]:
+    """Scan split/Ship/*.json for ship metadata."""
+    result = {}
+    for f in source_dir.iterdir():
+        if f.suffix != ".json":
+            continue
+        try:
+            data = json.loads(f.read_text())
+            ship_id = data.get("id")
+            if ship_id is None:
+                continue
+            typeinfo = data.get("typeinfo", {})
+            result[str(ship_id)] = {
+                "name": data.get("name", ""),
+                "index": data.get("index", ""),
+                "species": typeinfo.get("species", "") if isinstance(typeinfo, dict) else "",
+                "nation": typeinfo.get("nation", "") if isinstance(typeinfo, dict) else "",
+                "level": data.get("level", 0),
+            }
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return result
+
+
 def load_ships_db(gamedata_path: Path) -> dict[int, dict]:
     """Load ships.json → {ship_id(int): {name, species, nation, level}}."""
     global _ships_db
     if _ships_db is not None:
         return _ships_db
 
-    json_path = gamedata_path / "ships.json"
-    if not json_path.exists():
-        log.warning("ships.json not found at %s", json_path)
-        _ships_db = {}
-        return _ships_db
-
-    try:
-        data = json.loads(json_path.read_text())
-        _ships_db = {int(k): v for k, v in data.items()}
-    except (json.JSONDecodeError, ValueError) as e:
-        log.warning("Failed to load ships.json: %s", e)
-        _ships_db = {}
+    data = resolve_json_cache(
+        gamedata_path / "ships.json",
+        gamedata_path / "split" / "Ship",
+        _build_ships,
+    )
+    _ships_db = {int(k): v for k, v in data.items()}
 
     # Merge display names from ship_names.json if available
     names_path = gamedata_path / "ship_names.json"
     if names_path.exists():
         try:
-            names = json.loads(names_path.read_text())
+            names = json.loads(names_path.read_text(encoding="utf-8"))
             for k, display_name in names.items():
                 sid = int(k)
                 if sid in _ships_db:
@@ -244,6 +265,28 @@ def _load_ship_icons_png(
 _projectiles_db: dict[int, dict] | None = None
 
 
+def _build_projectiles(source_dir: Path) -> dict[str, Any]:
+    """Scan split/Projectile/*.json for ammoType + caliber."""
+    result = {}
+    for f in source_dir.iterdir():
+        if f.suffix != ".json":
+            continue
+        try:
+            data = json.loads(f.read_text())
+            pid = data.get("id")
+            if pid is None:
+                continue
+            ammo_type = data.get("ammoType", "")
+            caliber = data.get("bulletDiametr", 0)
+            entry: dict[str, Any] = {"a": ammo_type}
+            if caliber:
+                entry["c"] = round(caliber * 1000)  # meters to mm
+            result[str(pid)] = entry
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return result
+
+
 def load_projectiles_db(gamedata_path: Path) -> dict[int, dict]:
     """Load projectiles.json → {params_id(int): {a: ammo_type, c: caliber_mm, s: is_secondary}}.
 
@@ -253,18 +296,12 @@ def load_projectiles_db(gamedata_path: Path) -> dict[int, dict]:
     if _projectiles_db is not None:
         return _projectiles_db
 
-    json_path = gamedata_path / "projectiles.json"
-    if not json_path.exists():
-        log.warning("projectiles.json not found at %s", json_path)
-        _projectiles_db = {}
-        return _projectiles_db
-
-    try:
-        data = json.loads(json_path.read_text())
-        _projectiles_db = {int(k): v for k, v in data.items()}
-    except (json.JSONDecodeError, ValueError) as e:
-        log.warning("Failed to load projectiles.json: %s", e)
-        _projectiles_db = {}
+    data = resolve_json_cache(
+        gamedata_path / "projectiles.json",
+        gamedata_path / "split" / "Projectile",
+        _build_projectiles,
+    )
+    _projectiles_db = {int(k): v for k, v in data.items()}
     return _projectiles_db
 
 
@@ -308,54 +345,27 @@ CONSUMABLE_TYPE_TO_CATEGORY: dict[str, str] = {
 }
 
 # Global consumable type ID → consumableType string.
-# From decompiled server code: ConsumableIDsMap maps consumableType strings
-# to integer IDs. The server replaces string keys with these IDs before
-# sending over the wire (in setConsumables pickle and onConsumableUsed).
-CONSUMABLE_TYPE_ID_MAP: dict[int, str] = {
-    0: "crashCrew",
-    1: "scout",
-    2: "airDefenseDisp",
-    3: "speedBoosters",
-    4: "artilleryBoosters",
-    5: "hangarBooster",
-    6: "smokeGenerator",
-    7: "unused",
-    8: "regenCrew",
-    9: "fighter",
-    10: "sonar",
-    11: "torpedoReloader",
-    12: "rls",
-    13: "trigger1",
-    14: "trigger2",
-    15: "trigger3",
-    16: "trigger4",
-    17: "trigger5",
-    18: "trigger6",
-    19: "invulnerable",
-    20: "healForsage",
-    21: "activeManeuvering",
-    22: "callFighters",
-    23: "regenerateHealth",
-    24: "subsOxygenRegen",
-    25: "subsWaveGunBoost",
-    26: "subsFourthState",
-    27: "depthCharges",
-    28: "trigger7",
-    29: "trigger8",
-    30: "trigger9",
-    31: "buff",
-    32: "buffsShift",
-    33: "circleWave",
-    34: "goDeep",
-    35: "weaponReloadBooster",
-    36: "hydrophone",
-    37: "fastRudders",
-    38: "subsEnergyFreeze",
-    39: "groupAuraBuff",
-    40: "affectedBuffAura",
-    41: "invisibilityExtraBuffConsumable",
-    42: "submarineLocator",
-}
+# Loaded from consumable_type_ids.json (generated by gamedata pipeline).
+CONSUMABLE_TYPE_ID_MAP: dict[int, str] = {}
+
+
+def _load_consumable_type_ids(gamedata_path: Path) -> dict[int, str]:
+    """Load consumable type ID map from consumable_type_ids.json."""
+    global CONSUMABLE_TYPE_ID_MAP
+    if CONSUMABLE_TYPE_ID_MAP:
+        return CONSUMABLE_TYPE_ID_MAP
+    json_path = gamedata_path / "consumable_type_ids.json"
+    if json_path.exists():
+        try:
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+            CONSUMABLE_TYPE_ID_MAP = {
+                int(k): v for k, v in data.items() if k.isdigit()
+            }
+        except (json.JSONDecodeError, ValueError) as e:
+            log.warning("Failed to load consumable_type_ids.json: %s", e)
+    if not CONSUMABLE_TYPE_ID_MAP:
+        log.warning("consumable_type_ids.json not found, using empty map")
+    return CONSUMABLE_TYPE_ID_MAP
 
 # consumableType string → icon name (Premium first, then base).
 # Maps the type string to the PCY icon file name.
@@ -381,42 +391,10 @@ CONSUMABLE_TYPE_TO_ICONS: dict[str, list[str]] = {
 _ship_consumables_cache: dict[int, dict[str, list[str]]] | None = None
 
 
-def load_ship_consumables(gamedata_path: Path) -> dict[int, dict[str, list[str]]]:
-    """Load consumable loadouts per ship.
-
-    Prefers ship_consumables.json (fast, ~200KB) if available.
-    Falls back to scanning GameParams split/Ship/ directory (slow, reads 1171 files).
-
-    Returns:
-        {ship_id: {"slots": ["damage_control", "hydroacoustic", ...],
-                    "abilities": ["PCY009_CrashCrewPremium", ...],
-                    "has_repair_party": True/False}}
-    """
-    global _ship_consumables_cache
-    if _ship_consumables_cache is not None:
-        return _ship_consumables_cache
-
-    # Fast path: pre-built JSON
-    json_path = gamedata_path / "ship_consumables.json"
-    ship_dir = gamedata_path / "split" / "Ship"
-    # Use JSON if it exists and is either the only source or newer than split dir
-    if json_path.exists() and (not ship_dir.exists() or json_path.stat().st_mtime >= ship_dir.stat().st_mtime):
-        try:
-            data = json.loads(json_path.read_text())
-            _ship_consumables_cache = {int(k): v for k, v in data.items()}
-            return _ship_consumables_cache
-        except (json.JSONDecodeError, ValueError) as e:
-            log.warning("Failed to load ship_consumables.json: %s", e)
-
-    # Slow path: scan split files
-    ship_dir = gamedata_path / "split" / "Ship"
-    if not ship_dir.exists():
-        log.warning("GameParams split/Ship not found at %s", ship_dir)
-        _ship_consumables_cache = {}
-        return _ship_consumables_cache
-
-    # Pre-load all Ability files for variant range lookup
-    ability_dir = gamedata_path / "split" / "Ability"
+def _build_ship_consumables(source_dir: Path) -> dict[str, Any]:
+    """Scan split/Ship/*.json (and sibling split/Ability/*.json) for consumable loadouts."""
+    # source_dir is split/Ship/; navigate to parent to find split/Ability/
+    ability_dir = source_dir.parent / "Ability"
     ability_data: dict[str, dict] = {}  # ability_name → full JSON
     if ability_dir.exists():
         for af in ability_dir.iterdir():
@@ -429,9 +407,9 @@ def load_ship_consumables(gamedata_path: Path) -> dict[int, dict[str, list[str]]
                 except (json.JSONDecodeError, ValueError):
                     pass
 
-    result: dict[int, dict] = {}
+    result: dict[str, Any] = {}
 
-    for ship_file in ship_dir.iterdir():
+    for ship_file in source_dir.iterdir():
         if ship_file.suffix != ".json":
             continue
         try:
@@ -483,25 +461,43 @@ def load_ship_consumables(gamedata_path: Path) -> dict[int, dict[str, list[str]]
 
                     break  # Only first option per slot
 
-        result[int(ship_id)] = {
+        result[str(ship_id)] = {
             "slots": slot_categories,
             "abilities": ability_names,
             "has_repair_party": "repair_party" in slot_categories,
             "ranges": ranges,
         }
 
-    _ship_consumables_cache = result
-    log.info("Loaded consumable data for %d ships from split files", len(result))
-
-    # Save as JSON for fast loading next time
-    try:
-        json_path = gamedata_path / "ship_consumables.json"
-        json_path.write_text(json.dumps(result, separators=(",", ":")))
-        log.info("Saved ship_consumables.json (%d ships)", len(result))
-    except OSError as e:
-        log.debug("Could not save ship_consumables.json: %s", e)
-
+    log.info("Built consumable data for %d ships from split files", len(result))
     return result
+
+
+def load_ship_consumables(gamedata_path: Path) -> dict[int, dict[str, list[str]]]:
+    """Load consumable loadouts per ship.
+
+    Prefers ship_consumables.json (fast, ~200KB) if available and fresh.
+    Falls back to scanning GameParams split/Ship/ + split/Ability/ (slow, reads 1171+ files).
+
+    Returns:
+        {ship_id: {"slots": ["damage_control", "hydroacoustic", ...],
+                    "abilities": ["PCY009_CrashCrewPremium", ...],
+                    "has_repair_party": True/False,
+                    "ranges": {"sonar": 5000.0, ...}}}
+    """
+    global _ship_consumables_cache
+    if _ship_consumables_cache is not None:
+        return _ship_consumables_cache
+
+    json_path = gamedata_path / "ship_consumables.json"
+    ship_dir = gamedata_path / "split" / "Ship"
+
+    data = resolve_json_cache(
+        json_path,
+        ship_dir,
+        _build_ship_consumables,
+    )
+    _ship_consumables_cache = {int(k): v for k, v in data.items()}
+    return _ship_consumables_cache
 
 
 _consumable_icons_cache: dict[str, cairo.ImageSurface] | None = None

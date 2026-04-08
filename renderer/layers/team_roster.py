@@ -84,7 +84,7 @@ class TeamRosterLayer(Layer):
         # (modernizations + November Foxtrot + captain skills)
         from wows_replay_parser.consumable_calc import compute_effective_reloads, SPECIES_INDEX
         ship_db = ctx.ship_db or {}
-        tracker = getattr(ctx.replay, "_tracker", None)
+        tracker = ctx.replay.tracker
 
         self._entity_reload: dict[int, dict[int, float]] = {}  # entity_id → {cons_id: reload_s}
         for entity_id, player in ctx.player_lookup.items():
@@ -96,7 +96,7 @@ class TeamRosterLayer(Layer):
             # Get learned skills from crewModifiersCompactParams
             learned: list[int] = []
             if tracker and species_idx >= 0:
-                crew_props = tracker._current.get(entity_id, {}).get("crewModifiersCompactParams")
+                crew_props = tracker.get_entity_props(entity_id).get("crewModifiersCompactParams")
                 if crew_props:
                     ls = getattr(crew_props, "learnedSkills", None)
                     if ls and species_idx < len(ls):
@@ -117,10 +117,9 @@ class TeamRosterLayer(Layer):
         # Build per-entity consumable timeline with cooldowns.
         # For consecutive uses: cooldown_end = next activation time.
         # For last use: cooldown_end = active_end + effective reload.
-        raw_activations = getattr(tracker, "_consumable_activations", {}) if tracker else {}
-
         self._cons_timeline: dict[int, list[tuple[float, int, float, float]]] = {}
-        for entity_id, acts in raw_activations.items():
+        for entity_id in ctx.player_lookup:
+            acts = tracker.get_consumable_activations(entity_id) if tracker else []
             by_cons: dict[int, list[tuple[float, float]]] = {}
             for activated_at, cons_id, duration in acts:
                 by_cons.setdefault(cons_id, []).append((activated_at, duration))

@@ -5,7 +5,7 @@ from typing import Callable, TYPE_CHECKING
 
 import cairo
 
-from renderer.assets import load_ship_icons, load_ships_db
+from renderer.assets import load_ship_icons, load_ships_db, _load_consumable_type_ids
 from renderer.config import RenderConfig
 from renderer.layers.base import Layer, RenderContext
 from renderer.game_state import GameStateAdapter
@@ -68,11 +68,9 @@ class MinimapRenderer:
 
         battleStage values: 2=loading, 1=countdown, 0=active, 3=ended.
         """
-        tracker = replay._tracker
-        for change in tracker._history:
-            if change.property_name == "battleStage" and change.new_value == 0:
-                return change.timestamp
-        return 0.0
+        tracker = replay.tracker
+        battle_start = tracker.battle_start_time
+        return battle_start if battle_start is not None else 0.0
 
     def add_layer(self, layer: Layer) -> None:
         """Add a layer to the rendering stack. First added = bottom."""
@@ -116,10 +114,11 @@ class MinimapRenderer:
             gamedata_path=config.gamedata_path,
         )
 
-        # Load ship database and icons
+        # Load ship database, icons, and consumable type IDs
         gp = Path(config.gamedata_path)
         ship_db = load_ships_db(gp)
         ship_icons = load_ship_icons(gp, config.team_colors, config.self_color)
+        _load_consumable_type_ids(gp)
 
         render_ctx = RenderContext(
             config=config,

@@ -88,10 +88,8 @@ class ShipLayer(Layer):
     def _build_target_yaw_timeline(self, ctx: RenderContext) -> None:
         """Build gun aim yaw timeline from targetLocalPos property changes."""
         TWO_PI = 2.0 * math.pi
-        tracker = ctx.replay._tracker
-        for change in tracker._history:
-            if change.property_name != "targetLocalPos":
-                continue
+        tracker = ctx.replay.tracker
+        for change in tracker.property_changes_by_name("targetLocalPos"):
             val = change.new_value
             if val is None or val == 65535:
                 continue

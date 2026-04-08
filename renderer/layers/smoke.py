@@ -45,15 +45,11 @@ class SmokeLayer(Layer):
         """
         from wows_replay_parser.packets.types import PacketType
 
-        tracker = self.ctx.replay._tracker
+        tracker = self.ctx.replay.tracker
         cache: dict[int, list[tuple[float, float, float]]] = {}
 
         # Identify SmokeScreen entity IDs
-        smoke_ids = {
-            eid
-            for eid, etype in tracker._entity_types.items()
-            if etype == "SmokeScreen"
-        }
+        smoke_ids = set(tracker.get_entities_by_type("SmokeScreen"))
 
         for packet in self.ctx.replay.packets:
             eid = getattr(packet, "entity_id", None)
@@ -99,12 +95,12 @@ class SmokeLayer(Layer):
         The last puff expires when the entity leaves, so:
             puff_lifetime = entity_leave_time - last_puff_creation_time
         """
-        tracker = self.ctx.replay._tracker
+        tracker = self.ctx.replay.tracker
         result: dict[int, float] = {}
         for eid, puffs in self._puff_cache.items():
             if not puffs:
                 continue
-            leave_time = tracker._entity_leave_times.get(eid)
+            leave_time = tracker.get_entity_leave_time(eid)
             if leave_time is None:
                 continue
             last_puff_t = puffs[-1][0]
@@ -114,7 +110,7 @@ class SmokeLayer(Layer):
         return result
 
     def render(self, cr: cairo.Context, state: object, timestamp: float) -> None:
-        tracker = getattr(self.ctx.replay, "_tracker", None)
+        tracker = self.ctx.replay.tracker
         if tracker is None:
             return
 
@@ -126,7 +122,7 @@ class SmokeLayer(Layer):
             if not puffs:
                 continue
 
-            props = tracker._current.get(entity_id, {})
+            props = tracker.get_entity_props(entity_id)
             radius = props.get("radius", 0)
             if not radius:
                 continue
@@ -136,7 +132,7 @@ class SmokeLayer(Layer):
                 continue
 
             # Check if smoke has fully expired (EntityLeave)
-            leave_time = tracker._entity_leave_times.get(entity_id)
+            leave_time = tracker.get_entity_leave_time(entity_id)
             if leave_time is not None and leave_time <= timestamp:
                 continue
 
