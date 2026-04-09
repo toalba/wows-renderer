@@ -36,7 +36,7 @@ class HealthBarLayer(Layer):
 
         # Load consumable data for repair party gating
         from renderer.assets import load_ship_consumables
-        ship_consumables = load_ship_consumables(ctx.config.effective_gamedata_path, vgd=ctx.config.versioned_gamedata)
+        ship_consumables = load_ship_consumables(ctx.config.effective_gamedata_path)
 
         for entity_id, player in ctx.player_lookup.items():
             if not player.ship_id:

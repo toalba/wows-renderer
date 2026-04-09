@@ -55,7 +55,7 @@ class PlayerHeaderLayer(Layer):
         super().initialize(ctx)
 
         ship_db = ctx.ship_db or {}
-        ship_consumables = load_ship_consumables(ctx.config.effective_gamedata_path, vgd=ctx.config.versioned_gamedata)
+        ship_consumables = load_ship_consumables(ctx.config.effective_gamedata_path)
 
         # Find self player
         self._self_eid: int | None = None

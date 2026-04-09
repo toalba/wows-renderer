@@ -112,11 +112,7 @@ class AircraftLayer(Layer):
         plane_dir = gamedata / "gui" / "battle_hud" / "markers_minimap" / "plane"
 
         # Load params_id -> icon_base mapping
-        vgd = ctx.config.versioned_gamedata
-        if vgd is not None:
-            self._icon_map = vgd.aircraft_icon_map
-        else:
-            self._icon_map = _load_aircraft_icon_map(gamedata)
+        self._icon_map = _load_aircraft_icon_map(gamedata)
 
         # Load all icons from all three directories
         # Key: (dir_name, icon_base, variant) -> surface

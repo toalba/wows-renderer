@@ -593,6 +593,9 @@ def ensure_version_cache(
                 "data/buff_drops.json",
                 "data/aircraft_icons.json",
                 "data/arena_key_maps.json",
+                "data/ships.json",
+                "data/ship_names.json",
+                "data/projectiles.json",
                 "data/global.mo",
             ],
         )

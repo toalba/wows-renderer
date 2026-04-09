@@ -117,8 +117,7 @@ class MinimapRenderer:
         )
 
         # Load ship database, icons, and consumable type IDs
-        vgd = config.versioned_gamedata
-        ship_db = load_ships_db(gp, vgd=vgd)
+        ship_db = load_ships_db(gp)
         ship_icons = load_ship_icons(gp, config.team_colors, config.self_color)
         _load_consumable_type_ids(gp)
 
