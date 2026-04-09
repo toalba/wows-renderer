@@ -2,7 +2,6 @@ from __future__ import annotations
 import json
 import logging
 import struct
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -565,24 +564,6 @@ def _classify_ability(ability_name: str) -> str:
         if pattern.lower() in ability_name.lower():
             return category
     return "unknown"
-
-
-@lru_cache(maxsize=4)
-def load_font_face(font_path: str) -> str:
-    """Get a font family name for cairo."""
-    return "sans-serif"
-
-
-def get_font_path(gamedata_path: Path, font_name: str = "Warhelios_Bold.ttf") -> Path:
-    """Get path to a game font file."""
-    candidates = [
-        gamedata_path / "gui" / "fonts" / font_name,
-        gamedata_path / "gui" / "fonts" / "WoWS" / font_name,
-    ]
-    for p in candidates:
-        if p.exists():
-            return p
-    return Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 
 # ── Localization (.mo) ──────────────────────────────────────────────
