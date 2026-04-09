@@ -87,3 +87,4 @@ class RenderConfig:
     @property
     def total_height(self) -> int:
         return self.minimap_size + self.hud_height
+

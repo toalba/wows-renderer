@@ -5,14 +5,27 @@ All notable changes to `wows-minimap-renderer` are documented here.
 ## [Unreleased]
 
 ### Added
-- **Per-version gamedata cache** — isolated cache directories per game version under `~/.cache/wows-gamedata/v{build_id}/`. No `git checkout` at render time — concurrent workers can render different version replays simultaneously. Uses `git archive` for extraction, GameParams decoded to blake2b-keyed pickle cache.
-- **GameParams.data decode + pickle caching** — `renderer/gameparams.py` decodes the binary (reverse + zlib + Python 2 pickle), caches result as standard pickle. Warm load is a single `pickle.load()` call.
+
+#### Gamedata Cache System
+- **Per-version gamedata cache** — isolated cache directories per game version under `~/.cache/wows-gamedata/v{build_id}/`. No `git checkout` at render time — concurrent workers can render different version replays simultaneously. Uses `git archive` for extraction.
+- **GameParams.data decode + pickle caching** — `renderer/gameparams.py` decodes the binary (reverse + zlib + Python 2 pickle), caches result as standard pickle keyed by blake2b hash.
 - **VersionedGamedata dataclass** — lazy `@cached_property` for ships_db, projectiles_db, ship_consumables, aircraft_icon_map, modernizations, crews. GameParams pickle loaded on first property access, not at construction.
-- **In-memory consumable reload calculation** — `compute_effective_reloads_from_data()` in parser uses pre-indexed Modernization/Crew dicts instead of scanning 762 split JSON files. TeamRosterLayer init: 7s → 2s on ARM.
-- **Async cache population at bot boot** — `populate_all_caches()` runs as background asyncio task in `setup_hook`, pre-caching all known version tags.
-- **Detailed per-phase timing** — resolve/parse/setup/render/encode/upload breakdown + per-layer init timings logged after each render.
+- **Async cache population at bot boot** — `populate_all_caches()` runs as background asyncio task, pre-caching all known version tags.
 - **Cold-load fallback** — `VersionedGamedata.from_gamedata_path()` decodes GameParams.data directly from a raw gamedata directory without git.
-- **Arms Race support** — buff drop icons from GameParams + BattleLogic state history
+
+#### Consumable Enhancements
+- **Consumable charge tracking** — team roster shows remaining charges per consumable for all players. Computes initial charges from GameParams with modernization + captain skill modifiers applied.
+- **Time-based consumable support** — detects `lifeCycleType=1` consumables (EU BB speed boost etc.), shows remaining capacity in seconds instead of charge count.
+- **Consumable state display** — white = ready (with charge count), green = active (with timer), gray = cooldown (with timer), dark = depleted.
+- **In-memory consumable reload calculation** — `compute_effective_reloads_from_data()` uses pre-indexed Modernization/Crew dicts instead of scanning 762 split JSON files. TeamRosterLayer init: 7s → 2s on ARM.
+
+#### New Features
+- **Chat messages in killfeed** — `onChatMessage` events (battle_common, battle_team, battle_prebattle) displayed interleaved with kills. Sender names team-colored, team chat prefixed [T], pre-battle [P].
+- **Arms Race buff zones** — buff drop icons from GameParams + BattleLogic state history
+- **Weather zone overlay** — white semi-transparent circles from InteractiveZone type==5
+- **Detailed per-phase timing** — resolve/parse/setup/render/encode/upload breakdown + per-layer init timings logged after each render.
+
+#### Earlier Features
 - **Aircraft icons from GameParams** — `aircraft_icons.json` maps `params_id` to correct icon (consumable fighters vs CV attack fighters)
 - **Smoke puff FIFO lifecycle** — puffs expire individually instead of all at once
 - **Vision-based enemy visibility** — uses vision events instead of position timestamps for accurate spotted/unspotted rendering
@@ -22,8 +35,12 @@ All notable changes to `wows-minimap-renderer` are documented here.
 
 ### Fixed
 - **CONSUMABLE_TYPE_ID_MAP mutation bug** — dict was reassigned instead of mutated in-place, causing `consumables.py` to hold a stale empty reference. Fixed with `.clear()` + `.update()`.
+- **ShipConfig consumable parsing** — Exteriors section extra data (autobuy + colorSchemes) was misinterpreted as next section count, causing empty consumable lists for ~25% of players.
 - Team color perspective swap in 6 layers + dead ship orientation
 - Smoke puffs now expire individually (FIFO) instead of all at once
+
+### Removed
+- Dead `load_font_face()` and `get_font_path()` functions from assets.py
 
 ### Data
 - **aircraft_icons.json** — params_id to icon_base mapping generated from GameParams
