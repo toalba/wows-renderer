@@ -81,14 +81,14 @@ class TeamRosterLayer(Layer):
                     self._cons_icons[type_id] = all_icons[icon_name]
                     break
 
-        # Build per-entity effective reload lookup using full modifier stack
-        # (modernizations + November Foxtrot + captain skills)
+        # Build per-entity effective reload + initial charges lookup
         from wows_replay_parser.consumable_calc import SPECIES_INDEX
         ship_db = ctx.ship_db or {}
         tracker = ctx.replay.tracker
         vgd = ctx.config.versioned_gamedata
 
         self._entity_reload: dict[int, dict[int, float]] = {}  # entity_id → {cons_id: reload_s}
+        self._entity_charges: dict[int, dict] = {}  # entity_id → {cons_id: ConsumableChargeInfo}
         for entity_id, player in ctx.player_lookup.items():
             if not player.ship_id or not player.ship_config:
                 continue
@@ -105,7 +105,10 @@ class TeamRosterLayer(Layer):
                         learned = list(ls[species_idx])
 
             if vgd is not None:
-                from wows_replay_parser.consumable_calc import compute_effective_reloads_from_data
+                from wows_replay_parser.consumable_calc import (
+                    compute_effective_reloads_from_data,
+                    compute_initial_charges_from_data,
+                )
                 reloads = compute_effective_reloads_from_data(
                     ship_consumables=vgd.ship_consumables,
                     modernizations=vgd.modernizations,
@@ -117,6 +120,17 @@ class TeamRosterLayer(Layer):
                     learned_skill_ids=learned,
                     crew_id=player.crew_id,
                 )
+                charges = compute_initial_charges_from_data(
+                    gameparams=vgd.gameparams,
+                    modernizations=vgd.modernizations,
+                    crews=vgd.crews,
+                    ship_id=player.ship_id,
+                    consumable_ids=player.ship_config.consumables,
+                    modernization_ids=player.ship_config.modernizations,
+                    learned_skill_ids=learned,
+                    crew_id=player.crew_id,
+                )
+                self._entity_charges[entity_id] = charges
             else:
                 from wows_replay_parser.consumable_calc import compute_effective_reloads
                 reloads = compute_effective_reloads(
@@ -303,26 +317,75 @@ class TeamRosterLayer(Layer):
                                    tr, tg, tb, kills, damage, cons_status,
                                    display_team=display_team)
 
-    def _get_cons_status(self, entity_id: int, timestamp: float) -> list[tuple[int, str, float]]:
-        """Return list of (cons_id, state, seconds) for consumables relevant right now.
+    def _get_cons_status(self, entity_id: int, timestamp: float) -> list[tuple[int, str, float, int]]:
+        """Return list of (cons_id, state, seconds, remaining_charges) for all equipped consumables.
 
-        state: 'active' | 'cooldown'
-        seconds: time remaining in current state
+        state: 'active' | 'cooldown' | 'ready'
+        seconds: time remaining in current state (0 for ready)
+        remaining_charges: charges left (-1 = unlimited, -2 = time-based show remaining capacity)
         """
-        result = []
-        seen_ids: set[int] = set()
+        # Count uses per consumable up to this timestamp
+        use_counts: dict[int, int] = {}
+        active_time: dict[int, float] = {}  # total active seconds per cons (for time-based)
+        current_state: dict[int, tuple[str, float]] = {}  # cons_id → (state, seconds_left)
+
         for activated_at, cons_id, active_end, cooldown_end in self._cons_timeline.get(entity_id, []):
-            if cons_id in seen_ids:
-                continue
             if timestamp < activated_at:
-                continue  # not yet activated
+                continue
+            use_counts[cons_id] = use_counts.get(cons_id, 0) + 1
+            # Track active time for time-based consumables
+            if timestamp >= active_end:
+                active_time[cons_id] = active_time.get(cons_id, 0) + (active_end - activated_at)
+            else:
+                active_time[cons_id] = active_time.get(cons_id, 0) + (timestamp - activated_at)
+
             if activated_at <= timestamp < active_end:
-                result.append((cons_id, "active", active_end - timestamp))
-                seen_ids.add(cons_id)
+                current_state[cons_id] = ("active", active_end - timestamp)
             elif active_end <= timestamp < cooldown_end:
-                result.append((cons_id, "cooldown", cooldown_end - timestamp))
-                seen_ids.add(cons_id)
-            # else: expired with no next use — don't show
+                current_state[cons_id] = ("cooldown", cooldown_end - timestamp)
+
+        # Build result for all equipped consumables
+        charge_info = self._entity_charges.get(entity_id, {})
+        result: list[tuple[int, str, float, int]] = []
+
+        if not charge_info:
+            # Fallback: no charge data, show only active/cooldown (old behavior)
+            for cons_id, (state, secs) in current_state.items():
+                result.append((cons_id, state, secs, -1))
+            return result
+
+        for cons_id, info in charge_info.items():
+            state_tuple = current_state.get(cons_id)
+
+            if info.time_based:
+                # Time-based: show remaining capacity
+                remaining_cap = info.max_capacity - active_time.get(cons_id, 0)
+                if info.regen_rate > 0 and cons_id not in current_state:
+                    # Could add regen calculation here if needed
+                    pass
+                remaining_cap = max(0, remaining_cap)
+
+                if state_tuple:
+                    state, secs = state_tuple
+                    result.append((cons_id, state, secs, -2))
+                elif remaining_cap > 0:
+                    result.append((cons_id, "ready", remaining_cap, -2))
+                else:
+                    result.append((cons_id, "depleted", 0, 0))
+            else:
+                # Charge-based
+                uses = use_counts.get(cons_id, 0)
+                if info.charges == -1:
+                    remaining = -1  # unlimited
+                else:
+                    remaining = max(0, info.charges - uses)
+
+                if state_tuple:
+                    state, secs = state_tuple
+                    result.append((cons_id, state, secs, remaining))
+                else:
+                    result.append((cons_id, "ready", 0, remaining))
+
         return result
 
     def _draw_header(self, cr, y, panel_w, label, r, g, b) -> float:
@@ -475,19 +538,34 @@ class TeamRosterLayer(Layer):
         return y + row_h
 
     def _draw_cons_line(self, cr, x, y, cons_status, max_x) -> None:
-        """Draw consumable icons with countdown/cooldown labels on one line."""
+        """Draw consumable icons with state indicators on one line.
+
+        States:
+            active   — green icon, time remaining label
+            cooldown — gray icon, time remaining label
+            ready    — white icon, charge count (or remaining seconds for time-based)
+            depleted — dark icon, no label
+        """
         icon_size = self.CONS_ICON_SIZE
         font_size = self.CONS_FONT_SIZE
-        gap = 4  # gap between icon+label groups
+        gap = 4
 
         cx = x
-        for cons_id, state, seconds in cons_status:
+        for cons_id, state, seconds, remaining in cons_status:
             if cx >= max_x:
                 break
 
             icon = self._cons_icons.get(cons_id)
-            is_active = state == "active"
-            icon_alpha = 1.0 if is_active else 0.4
+
+            # Icon alpha/tint by state
+            if state == "active":
+                icon_alpha = 1.0
+            elif state == "cooldown":
+                icon_alpha = 0.35
+            elif state == "depleted":
+                icon_alpha = 0.15
+            else:  # ready
+                icon_alpha = 0.7
 
             # Draw icon
             if icon:
@@ -500,24 +578,45 @@ class TeamRosterLayer(Layer):
                 cr.paint_with_alpha(icon_alpha)
                 cr.restore()
 
-                # Pie-chart timer overlay on active icons
-                if is_active:
+                if state == "active":
                     self._draw_pie_timer(cr, cx + icon_size / 2, y - icon_size / 2, icon_size / 2 - 1, seconds)
 
-            cx += icon_size + 2
+            cx += icon_size + 1
 
-            # Time label
-            label = _fmt_seconds(seconds)
+            # Label
             cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
             cr.set_font_size(font_size)
-            if is_active:
-                cr.set_source_rgba(0.3, 1.0, 0.5, 1.0)   # bright green
+
+            label = ""
+            if state == "active":
+                cr.set_source_rgba(0.3, 1.0, 0.5, 1.0)  # green
+                label = _fmt_seconds(seconds)
+            elif state == "cooldown":
+                cr.set_source_rgba(0.6, 0.6, 0.6, 0.8)  # gray
+                label = _fmt_seconds(seconds)
+            elif state == "ready":
+                if remaining == -2:
+                    # Time-based: show remaining capacity as seconds
+                    cr.set_source_rgba(0.9, 0.9, 0.9, 0.8)  # white
+                    label = _fmt_seconds(seconds) if seconds > 0 else ""
+                elif remaining == -1:
+                    # Unlimited charges — no label needed
+                    label = ""
+                elif remaining > 0:
+                    cr.set_source_rgba(0.9, 0.9, 0.9, 0.8)  # white
+                    label = str(remaining)
+                else:
+                    # 0 charges left
+                    label = "0"
+                    cr.set_source_rgba(0.5, 0.5, 0.5, 0.6)
+
+            if label:
+                ext = cr.text_extents(label)
+                cr.move_to(cx, y)
+                cr.show_text(label)
+                cx += ext.width + gap
             else:
-                cr.set_source_rgba(0.6, 0.6, 0.6, 0.8)   # gray cooldown
-            ext = cr.text_extents(label)
-            cr.move_to(cx, y)
-            cr.show_text(label)
-            cx += ext.width + gap
+                cx += gap
 
     def _draw_pie_timer(self, cr, cx, cy, radius, remaining_sec) -> None:
         """Draw a semi-transparent dark pie wedge showing time consumed."""
