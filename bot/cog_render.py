@@ -156,14 +156,28 @@ class RenderCog(commands.Cog):
             upload_time = time.perf_counter() - t_upload_start
 
             # Log timing breakdown
+            resolve_time = timings.get("resolve", 0)
             parse_time = timings.get("parse", 0)
+            setup_time = timings.get("setup", 0)
             render_time = timings.get("render", 0)
             encode_time = timings.get("encode", 0)
-            total_time = parse_time + render_time + encode_time + upload_time
+            total_time = resolve_time + parse_time + render_time + encode_time + upload_time
             frames = int(timings.get("_frames", 0))
+
+            # Layer init breakdown
+            layer_init = timings.get("layer_init", {})
+            layer_lines = ""
+            if isinstance(layer_init, dict) and layer_init:
+                sorted_layers = sorted(layer_init.items(), key=lambda x: -x[1])
+                layer_lines = "\n  layer_init:"
+                for name, t in sorted_layers:
+                    layer_lines += f"\n    {name:.<30s} {t:.3f}s"
+
             log.info(
                 "\n[TIMING] replay=%s players=%d duration=%.1fs"
+                "\n  resolve: %.3fs"
                 "\n  parse  : %.2fs"
+                "\n  setup  : %.2fs (assets + layer init)%s"
                 "\n  render : %.2fs"
                 "\n  encode : %.2fs"
                 "\n  upload : %.2fs"
@@ -172,7 +186,10 @@ class RenderCog(commands.Cog):
                 replay.filename,
                 num_players,
                 replay_duration,
+                resolve_time,
                 parse_time,
+                setup_time,
+                layer_lines,
                 render_time,
                 encode_time,
                 upload_time,

@@ -109,6 +109,7 @@ class MinimapRenderer:
 
         # Build adapter and context
         gp = config.effective_gamedata_path
+        t_setup = perf_counter()
         adapter = GameStateAdapter.from_replay(
             replay,
             minimap_size=config.minimap_size,
@@ -131,8 +132,14 @@ class MinimapRenderer:
         )
 
         # Initialize all layers
+        layer_timings: dict[str, float] = {}
         for layer in self.layers:
+            t_layer = perf_counter()
             layer.initialize(render_ctx)
+            layer_timings[type(layer).__name__] = perf_counter() - t_layer
+
+        self.timings["setup"] = perf_counter() - t_setup
+        self.timings["layer_init"] = layer_timings
 
         # Compute frame timestamps
         start = config.start_time

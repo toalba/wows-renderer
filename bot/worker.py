@@ -69,10 +69,12 @@ def render_replay(
     except RuntimeError:
         # Fallback: cold-load from provided gamedata directory
         vgd = VersionedGamedata.from_gamedata_path(Path(gamedata_path))
+    timings["resolve"] = perf_counter() - t0
 
     # Phase 1: Parse replay
+    t1 = perf_counter()
     replay = parse_replay(replay_path, str(vgd.entity_defs_path))
-    timings["parse"] = perf_counter() - t0
+    timings["parse"] = perf_counter() - t1
 
     if progress_queue:
         progress_queue.put(("status", "Rendering... 0%"))
@@ -132,6 +134,8 @@ def render_replay(
     timings["render"] = renderer.timings.get("render", 0.0)
     timings["encode"] = renderer.timings.get("encode", 0.0)
     timings["_frames"] = renderer.timings.get("frames", 0.0)
+    timings["setup"] = renderer.timings.get("setup", 0.0)
+    timings["layer_init"] = renderer.timings.get("layer_init", {})
 
     game_type = replay.meta.get("gameType", "Unknown")
     return output_path, replay.duration, timings, replay.game_version, len(replay.players), game_type
