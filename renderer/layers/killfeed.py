@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import cairo
@@ -40,14 +41,38 @@ _DEATH_REASON: dict[int, tuple[str, str]] = {
     35: ("MISSILE", "icon_frag_missile"),  # MISSILE
 }
 
+# Chat channel → display color (r, g, b)
+_CHANNEL_COLORS: dict[str, tuple[float, float, float]] = {
+    "battle_common": (1.0, 1.0, 1.0),       # white — all chat
+    "battle_team": (0.6, 0.9, 1.0),         # light blue — team chat
+    "battle_prebattle": (0.8, 0.8, 0.6),    # muted yellow — pre-battle
+}
+
+
+@dataclass
+class _FeedEntry:
+    """A single entry in the kill+chat feed."""
+    timestamp: float
+    kind: str  # "kill" or "chat"
+    # Kill fields
+    victim_id: int = 0
+    killer_id: int = 0
+    death_reason: int = 0
+    # Chat fields
+    sender_name: str = ""
+    sender_team: int = -1  # display team (0=ally, 1=enemy, -1=unknown)
+    channel: str = ""
+    message: str = ""
+
 
 class KillfeedLayer(Layer):
-    """Displays recent kills as a feed on the right side panel."""
+    """Displays recent kills and chat messages as a feed on the right panel."""
 
     DISPLAY_DURATION = 120.0  # game-seconds (at 20x speed = 6s of video)
+    CHAT_DISPLAY_DURATION = 200.0  # chat stays longer
     FONT_SIZE = 13
     LINE_HEIGHT = 20
-    MAX_VISIBLE = 8
+    MAX_VISIBLE = 10
     ICON_SIZE = 16
 
     def initialize(self, ctx: RenderContext) -> None:
@@ -65,19 +90,57 @@ class KillfeedLayer(Layer):
                     except Exception:
                         pass
 
-        # Pre-build kill timeline from DeathEvents
-        self._kills: list[tuple[float, int, int, int]] = []  # (timestamp, victim_id, killer_id, reason)
-        seen = set()
+        # Build account_id → (name, display_team) lookup for chat
+        account_lookup: dict[int, tuple[str, int]] = {}
+        for entity_id, player in ctx.player_lookup.items():
+            display_team = ctx.raw_to_display_team(player.team_id)
+            account_lookup[player.account_id] = (player.name, display_team)
+
+        # Build unified feed from kills + chat
+        entries: list[_FeedEntry] = []
+
+        # Kills
+        seen_kills: set[tuple[float, int]] = set()
         for event in ctx.replay.events:
             if type(event).__name__ == "DeathEvent":
                 if event.entity_id != event.victim_id:
                     continue
                 key = (round(event.timestamp, 1), event.victim_id)
-                if key not in seen:
-                    seen.add(key)
+                if key not in seen_kills:
+                    seen_kills.add(key)
                     reason = event.raw_data.get("arg1", 0)
-                    self._kills.append((event.timestamp, event.victim_id, event.killer_id, reason))
-        self._kills.sort(key=lambda k: k[0])
+                    entries.append(_FeedEntry(
+                        timestamp=event.timestamp,
+                        kind="kill",
+                        victim_id=event.victim_id,
+                        killer_id=event.killer_id,
+                        death_reason=reason,
+                    ))
+
+        # Chat messages
+        from wows_replay_parser.events.models import ChatEvent
+        for event in ctx.replay.events:
+            if not isinstance(event, ChatEvent):
+                continue
+            if not event.message:
+                continue
+            sender_info = account_lookup.get(event.sender_id)
+            if sender_info:
+                name, display_team = sender_info
+            else:
+                name = f"Player"
+                display_team = -1
+            entries.append(_FeedEntry(
+                timestamp=event.timestamp,
+                kind="chat",
+                sender_name=name,
+                sender_team=display_team,
+                channel=event.channel,
+                message=event.message,
+            ))
+
+        entries.sort(key=lambda e: e.timestamp)
+        self._entries = entries
 
         # Build entity_id → ship display name lookup
         ship_db = ctx.ship_db or {}
@@ -99,13 +162,14 @@ class KillfeedLayer(Layer):
         config = self.ctx.config
         player_lookup = self.ctx.player_lookup
 
-        visible = []
-        for kill_t, victim_id, killer_id, reason in self._kills:
-            age = timestamp - kill_t
+        visible: list[tuple[float, _FeedEntry]] = []
+        for entry in self._entries:
+            age = timestamp - entry.timestamp
             if age < 0:
                 break
-            if age <= self.DISPLAY_DURATION:
-                visible.append((age, victim_id, killer_id, reason))
+            max_age = self.CHAT_DISPLAY_DURATION if entry.kind == "chat" else self.DISPLAY_DURATION
+            if age <= max_age:
+                visible.append((age, entry))
 
         if not visible:
             return
@@ -118,8 +182,6 @@ class KillfeedLayer(Layer):
         line_h = self.LINE_HEIGHT * s
         icon_size = self.ICON_SIZE * s
 
-        max_x = config.total_width - 4
-
         # Anchor from bottom of minimap area, grow upward
         y_bottom = config.hud_height + config.minimap_size - 10
         y_start = y_bottom - len(visible) * line_h
@@ -131,75 +193,127 @@ class KillfeedLayer(Layer):
         cr.rectangle(clip_x, 0, clip_w, config.total_height)
         cr.clip()
 
-        for i, (age, victim_id, killer_id, reason) in enumerate(visible):
+        for i, (age, entry) in enumerate(visible):
             y = y_start + i * line_h
-            alpha = min(1.0, (self.DISPLAY_DURATION - age) / 20.0)
 
-            killer = player_lookup.get(killer_id)
-            victim = player_lookup.get(victim_id)
-
-            killer_name = killer.name if killer else "?"
-            victim_name = victim.name if victim else "?"
-
-            if killer and hasattr(killer, "team_id"):
-                display_team = self.ctx.raw_to_display_team(killer.team_id)
-                kr, kg, kb, _ = config.team_colors.get(display_team, (1, 1, 1, 1))
+            if entry.kind == "kill":
+                max_age = self.DISPLAY_DURATION
+                alpha = min(1.0, (max_age - age) / 20.0)
+                self._render_kill(cr, x_base, y, alpha, entry, font_size, icon_size, player_lookup)
             else:
-                kr, kg, kb = 1, 1, 1
-
-            if victim and hasattr(victim, "team_id"):
-                display_team = self.ctx.raw_to_display_team(victim.team_id)
-                vr, vg, vb, _ = config.team_colors.get(display_team, (1, 1, 1, 1))
-            else:
-                vr, vg, vb = 1, 1, 1
-
-            cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-            cr.set_font_size(font_size)
-
-            # Killer name + ship (cached text surfaces)
-            killer_ship = self._ship_names.get(killer_id, "")
-            ext_k_w = self.draw_cached_text(cr, x_base, y, killer_name, kr, kg, kb,
-                                            alpha=alpha, font_size=font_size, bold=True)
-            if killer_ship:
-                ship_text = f" ({killer_ship}) "
-                ext_ks_w = self.draw_cached_text(cr, x_base + ext_k_w, y, ship_text, 0.85, 0.85, 0.85,
-                                                 alpha=alpha * 0.7, font_size=font_size * 0.85, bold=False)
-                icon_x = x_base + ext_k_w + ext_ks_w + 4
-            else:
-                icon_x = x_base + ext_k_w + 4
-
-            # Death reason icon or text
-            label, icon_name = _DEATH_REASON.get(reason, ("", ""))
-            icon_surface = self._icons.get(icon_name) if icon_name else None
-
-            if icon_surface:
-                iw = icon_surface.get_width()
-                ih = icon_surface.get_height()
-                icon_scale = icon_size / max(iw, ih)
-                cr.save()
-                cr.translate(icon_x, y - icon_size + 2)
-                cr.scale(icon_scale, icon_scale)
-                cr.set_source_surface(icon_surface, 0, 0)
-                cr.paint_with_alpha(alpha)
-                cr.restore()
-                after_icon_x = icon_x + icon_size + 4
-            elif label:
-                cause_text = f" [{label}] "
-                ext_c_w = self.draw_cached_text(cr, icon_x, y, cause_text, 0.8, 0.8, 0.8,
-                                                alpha=alpha * 0.7, font_size=font_size * 0.85, bold=False)
-                after_icon_x = icon_x + ext_c_w
-            else:
-                ext_c_w = self.draw_cached_text(cr, icon_x, y, " \u2715 ", 0.8, 0.8, 0.8,
-                                                alpha=alpha * 0.7, font_size=font_size, bold=False)
-                after_icon_x = icon_x + ext_c_w
-
-            # Victim name + ship
-            ext_v_w = self.draw_cached_text(cr, after_icon_x, y, victim_name, vr, vg, vb,
-                                            alpha=alpha, font_size=font_size, bold=True)
-            victim_ship = self._ship_names.get(victim_id, "")
-            if victim_ship:
-                ship_text_v = f" ({victim_ship})"
-                self.draw_cached_text(cr, after_icon_x + ext_v_w, y, ship_text_v, 0.85, 0.85, 0.85,
-                                      alpha=alpha * 0.7, font_size=font_size * 0.85, bold=False)
+                max_age = self.CHAT_DISPLAY_DURATION
+                alpha = min(1.0, (max_age - age) / 30.0)
+                self._render_chat(cr, x_base, y, alpha, entry, font_size)
 
         cr.restore()  # end clip
+
+    def _render_kill(
+        self, cr: cairo.Context, x_base: float, y: float, alpha: float,
+        entry: _FeedEntry, font_size: float, icon_size: float,
+        player_lookup: dict,
+    ) -> None:
+        config = self.ctx.config
+        killer = player_lookup.get(entry.killer_id)
+        victim = player_lookup.get(entry.victim_id)
+
+        killer_name = killer.name if killer else "?"
+        victim_name = victim.name if victim else "?"
+
+        if killer and hasattr(killer, "team_id"):
+            display_team = self.ctx.raw_to_display_team(killer.team_id)
+            kr, kg, kb, _ = config.team_colors.get(display_team, (1, 1, 1, 1))
+        else:
+            kr, kg, kb = 1, 1, 1
+
+        if victim and hasattr(victim, "team_id"):
+            display_team = self.ctx.raw_to_display_team(victim.team_id)
+            vr, vg, vb, _ = config.team_colors.get(display_team, (1, 1, 1, 1))
+        else:
+            vr, vg, vb = 1, 1, 1
+
+        cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(font_size)
+
+        # Killer name + ship
+        killer_ship = self._ship_names.get(entry.killer_id, "")
+        ext_k_w = self.draw_cached_text(cr, x_base, y, killer_name, kr, kg, kb,
+                                        alpha=alpha, font_size=font_size, bold=True)
+        if killer_ship:
+            ship_text = f" ({killer_ship}) "
+            ext_ks_w = self.draw_cached_text(cr, x_base + ext_k_w, y, ship_text, 0.85, 0.85, 0.85,
+                                             alpha=alpha * 0.7, font_size=font_size * 0.85, bold=False)
+            icon_x = x_base + ext_k_w + ext_ks_w + 4
+        else:
+            icon_x = x_base + ext_k_w + 4
+
+        # Death reason icon or text
+        label, icon_name = _DEATH_REASON.get(entry.death_reason, ("", ""))
+        icon_surface = self._icons.get(icon_name) if icon_name else None
+
+        if icon_surface:
+            iw = icon_surface.get_width()
+            ih = icon_surface.get_height()
+            icon_scale = icon_size / max(iw, ih)
+            cr.save()
+            cr.translate(icon_x, y - icon_size + 2)
+            cr.scale(icon_scale, icon_scale)
+            cr.set_source_surface(icon_surface, 0, 0)
+            cr.paint_with_alpha(alpha)
+            cr.restore()
+            after_icon_x = icon_x + icon_size + 4
+        elif label:
+            cause_text = f" [{label}] "
+            ext_c_w = self.draw_cached_text(cr, icon_x, y, cause_text, 0.8, 0.8, 0.8,
+                                            alpha=alpha * 0.7, font_size=font_size * 0.85, bold=False)
+            after_icon_x = icon_x + ext_c_w
+        else:
+            ext_c_w = self.draw_cached_text(cr, icon_x, y, " \u2715 ", 0.8, 0.8, 0.8,
+                                            alpha=alpha * 0.7, font_size=font_size, bold=False)
+            after_icon_x = icon_x + ext_c_w
+
+        # Victim name + ship
+        ext_v_w = self.draw_cached_text(cr, after_icon_x, y, victim_name, vr, vg, vb,
+                                        alpha=alpha, font_size=font_size, bold=True)
+        victim_ship = self._ship_names.get(entry.victim_id, "")
+        if victim_ship:
+            ship_text_v = f" ({victim_ship})"
+            self.draw_cached_text(cr, after_icon_x + ext_v_w, y, ship_text_v, 0.85, 0.85, 0.85,
+                                  alpha=alpha * 0.7, font_size=font_size * 0.85, bold=False)
+
+    def _render_chat(
+        self, cr: cairo.Context, x_base: float, y: float, alpha: float,
+        entry: _FeedEntry, font_size: float,
+    ) -> None:
+        config = self.ctx.config
+
+        # Sender color: team-colored if known, else channel color
+        if entry.sender_team >= 0:
+            sr, sg, sb, _ = config.team_colors.get(entry.sender_team, (1, 1, 1, 1))
+        else:
+            sr, sg, sb = _CHANNEL_COLORS.get(entry.channel, (1, 1, 1))
+
+        # Channel prefix for team chat
+        prefix = ""
+        if entry.channel == "battle_team":
+            prefix = "[T] "
+        elif entry.channel == "battle_prebattle":
+            prefix = "[P] "
+
+        # Render: [prefix] name: message
+        x = x_base
+        if prefix:
+            x += self.draw_cached_text(cr, x, y, prefix, 0.7, 0.7, 0.7,
+                                       alpha=alpha * 0.6, font_size=font_size * 0.85, bold=False)
+
+        x += self.draw_cached_text(cr, x, y, entry.sender_name, sr, sg, sb,
+                                   alpha=alpha, font_size=font_size, bold=True)
+
+        x += self.draw_cached_text(cr, x, y, ": ", 0.7, 0.7, 0.7,
+                                   alpha=alpha * 0.8, font_size=font_size, bold=False)
+
+        # Truncate message to fit panel
+        max_msg_width = config.total_width - x - 8
+        msg = entry.message
+        # Simple truncation — could be smarter but good enough
+        self.draw_cached_text(cr, x, y, msg, 0.9, 0.9, 0.9,
+                              alpha=alpha * 0.9, font_size=font_size * 0.9, bold=False)
