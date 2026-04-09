@@ -36,7 +36,7 @@ log = logging.getLogger(__name__)
 _DEFAULT_CACHE_ROOT = Path.home() / ".cache" / "wows-gamedata"
 
 # Entity types needed by consumable_calc.py in the parser
-_SPLIT_TYPES_FOR_CALC = {"Modernization", "Crew"}
+_SPLIT_TYPES_FOR_CACHE = {"Modernization", "Crew"}
 
 
 # ── Data extraction (filter GameParams → renderer lookups) ─────────
@@ -578,11 +578,15 @@ def ensure_version_cache(
             [
                 "data/scripts_entity/",
                 "data/content/GameParams.data",
-                "data/map_sizes.json",
-                "data/consumable_type_ids.json",
-                "data/global.mo",
                 "data/gui/",
                 "data/spaces/",
+                # Static JSON/data files (pipeline-generated, small)
+                "data/map_sizes.json",
+                "data/consumable_type_ids.json",
+                "data/buff_drops.json",
+                "data/aircraft_icons.json",
+                "data/arena_key_maps.json",
+                "data/global.mo",
             ],
         )
 
@@ -600,8 +604,8 @@ def ensure_version_cache(
             separators=(",", ":"),
         ))
 
-        n_split = write_split_subset(gp, data_dir, _SPLIT_TYPES_FOR_CALC)
-        log.info("Wrote %d split files (Modernization + Crew)", n_split)
+        n_split = write_split_subset(gp, data_dir, _SPLIT_TYPES_FOR_CACHE)
+        log.info("Wrote %d split files (Modernization + Crew + Drop)", n_split)
 
         # Remove raw GameParams.data to save disk (~16 MB)
         content_dir = data_dir / "content"
