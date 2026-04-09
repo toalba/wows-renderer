@@ -381,6 +381,36 @@ class VersionedGamedata:
         """Aircraft params_id → icon_base string."""
         return {int(k): v for k, v in _extract_aircraft_icon_map(self.gameparams).items()}
 
+    @cached_property
+    def modernizations(self) -> dict[int, dict]:
+        """Modernization GameParams ID → entity dict (with modifiers)."""
+        result: dict[int, dict] = {}
+        for _, obj in self.gameparams.items():
+            if not isinstance(obj, dict):
+                continue
+            ti = obj.get("typeinfo")
+            if not isinstance(ti, dict) or ti.get("type") != "Modernization":
+                continue
+            mid = obj.get("id")
+            if mid is not None:
+                result[mid] = obj
+        return result
+
+    @cached_property
+    def crews(self) -> dict[int, dict]:
+        """Crew GameParams ID → entity dict (with Skills)."""
+        result: dict[int, dict] = {}
+        for _, obj in self.gameparams.items():
+            if not isinstance(obj, dict):
+                continue
+            ti = obj.get("typeinfo")
+            if not isinstance(ti, dict) or ti.get("type") != "Crew":
+                continue
+            cid = obj.get("id")
+            if cid is not None:
+                result[cid] = obj
+        return result
+
     @classmethod
     def from_gamedata_path(cls, gamedata_path: Path) -> VersionedGamedata:
         """Cold-load fallback: build from a raw gamedata directory.

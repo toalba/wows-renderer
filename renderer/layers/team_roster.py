@@ -83,9 +83,10 @@ class TeamRosterLayer(Layer):
 
         # Build per-entity effective reload lookup using full modifier stack
         # (modernizations + November Foxtrot + captain skills)
-        from wows_replay_parser.consumable_calc import compute_effective_reloads, SPECIES_INDEX
+        from wows_replay_parser.consumable_calc import SPECIES_INDEX
         ship_db = ctx.ship_db or {}
         tracker = ctx.replay.tracker
+        vgd = ctx.config.versioned_gamedata
 
         self._entity_reload: dict[int, dict[int, float]] = {}  # entity_id → {cons_id: reload_s}
         for entity_id, player in ctx.player_lookup.items():
@@ -103,15 +104,30 @@ class TeamRosterLayer(Layer):
                     if ls and species_idx < len(ls):
                         learned = list(ls[species_idx])
 
-            reloads = compute_effective_reloads(
-                ship_id=player.ship_id,
-                ship_species=species,
-                modernization_ids=player.ship_config.modernizations,
-                exterior_ids=player.ship_config.exteriors,
-                learned_skill_ids=learned,
-                crew_id=player.crew_id,
-                gamedata_path=gp / "scripts_entity" / "entity_defs",
-            )
+            if vgd is not None:
+                from wows_replay_parser.consumable_calc import compute_effective_reloads_from_data
+                reloads = compute_effective_reloads_from_data(
+                    ship_consumables=vgd.ship_consumables,
+                    modernizations=vgd.modernizations,
+                    crews=vgd.crews,
+                    ship_id=player.ship_id,
+                    ship_species=species,
+                    modernization_ids=player.ship_config.modernizations,
+                    exterior_ids=player.ship_config.exteriors,
+                    learned_skill_ids=learned,
+                    crew_id=player.crew_id,
+                )
+            else:
+                from wows_replay_parser.consumable_calc import compute_effective_reloads
+                reloads = compute_effective_reloads(
+                    ship_id=player.ship_id,
+                    ship_species=species,
+                    modernization_ids=player.ship_config.modernizations,
+                    exterior_ids=player.ship_config.exteriors,
+                    learned_skill_ids=learned,
+                    crew_id=player.crew_id,
+                    gamedata_path=gp / "scripts_entity" / "entity_defs",
+                )
             if reloads:
                 self._entity_reload[entity_id] = reloads
 
