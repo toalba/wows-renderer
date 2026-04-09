@@ -315,8 +315,10 @@ def _extract_aircraft_icon_map(gp: dict) -> dict[str, str]:
 class VersionedGamedata:
     """Resolved, ready-to-use gamedata for a specific game version.
 
-    Holds the fully decoded GameParams dict in memory and provides
-    lazy cached properties for derived lookups (ships, projectiles, etc.).
+    The GameParams dict is loaded lazily on first access (e.g. when a layer
+    queries ``ships_db``).  This means constructing a ``VersionedGamedata``
+    from a warm cache is near-instant — the 15 MB pickle load is deferred
+    until rendering actually needs it.
 
     File-based assets (icons, minimaps, .mo) are served from ``version_dir``.
     """
@@ -327,8 +329,15 @@ class VersionedGamedata:
     build_id: str
     """Build ID string (e.g. ``"12116141"``)."""
 
-    gameparams: dict = field(repr=False)
-    """Fully decoded GameParams dict (~15 MB in memory)."""
+    _gameparams: dict | None = field(default=None, repr=False)
+    """Pre-loaded GameParams dict, or None for lazy load from pickle."""
+
+    @cached_property
+    def gameparams(self) -> dict:
+        """Fully decoded GameParams dict (~15 MB in memory). Loaded lazily."""
+        if self._gameparams is not None:
+            return self._gameparams
+        return load_gameparams_cached(self.version_dir)
 
     @property
     def entity_defs_path(self) -> Path:
@@ -401,7 +410,7 @@ class VersionedGamedata:
         return cls(
             version_dir=gamedata_path,
             build_id="unknown",
-            gameparams=gp,
+            _gameparams=gp,
         )
 
 
@@ -544,11 +553,9 @@ def ensure_version_cache(
     # ── Fast path ──────────────────────────────────────────────
     if (version_dir / ".ready").exists():
         log.debug("Cache hit for v%s", build_id)
-        gp = load_gameparams_cached(version_dir)
         return VersionedGamedata(
             version_dir=version_dir,
             build_id=build_id,
-            gameparams=gp,
         )
 
     # ── Slow path: populate cache ──────────────────────────────
@@ -627,7 +634,7 @@ def ensure_version_cache(
                 return VersionedGamedata(
                     version_dir=version_dir,
                     build_id=build_id,
-                    gameparams=gp,
+                    _gameparams=gp,
                 )
             raise
 
@@ -637,7 +644,7 @@ def ensure_version_cache(
         return VersionedGamedata(
             version_dir=version_dir,
             build_id=build_id,
-            gameparams=gp,
+            _gameparams=gp,
         )
 
     except BaseException:
