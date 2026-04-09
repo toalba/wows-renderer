@@ -358,12 +358,8 @@ class TeamRosterLayer(Layer):
             state_tuple = current_state.get(cons_id)
 
             if info.time_based:
-                # Time-based: show remaining capacity
-                remaining_cap = info.max_capacity - active_time.get(cons_id, 0)
-                if info.regen_rate > 0 and cons_id not in current_state:
-                    # Could add regen calculation here if needed
-                    pass
-                remaining_cap = max(0, remaining_cap)
+                # Time-based: remaining capacity = max - total active time used
+                remaining_cap = max(0, info.max_capacity - active_time.get(cons_id, 0))
 
                 if state_tuple:
                     state, secs = state_tuple
