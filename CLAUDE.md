@@ -11,12 +11,15 @@ wows-minimap-renderer/
 ├── renderer/                  # Core rendering engine
 │   ├── core.py                # MinimapRenderer — frame loop, layer compositing, async frame writer
 │   ├── game_state.py          # GameStateAdapter — bridges parser state to render state
-│   ├── config.py              # RenderConfig — resolution, fps, speed, team colors (with validation)
+│   ├── config.py              # RenderConfig — resolution, fps, speed, team colors, versioned_gamedata
+│   ├── gameparams.py           # GameParams.data decode + blake2b pickle cache
+│   ├── gamedata_cache.py       # Per-version gamedata cache (VersionedGamedata, git archive extraction)
+│   ├── gamedata_resolver.py    # JSON cache resolver (fallback for cold-load without GameParams)
 │   ├── layers/                # Layer-based rendering (composited per frame, bottom to top)
 │   │   ├── base.py            # Layer ABC + RenderContext + text cache (draw_cached_text, draw_text_halo)
 │   │   ├── map_bg.py          # Minimap background (pre-rendered static cache: water + minimap + grid)
 │   │   ├── team_roster.py     # Left panel: team rosters (player/ship names, kills, damage, HP bar, consumable timers)
-│   │   ├── capture_points.py  # Cap circles + progress + team color
+│   │   ├── capture_points.py  # Cap circles + progress + team color + buff zones (Arms Race)
 │   │   ├── trails.py          # Ship movement trails (fading lines, pre-sampled)
 │   │   ├── smoke.py           # Smoke screen radius visualization
 │   │   ├── projectiles.py     # Shell traces + torpedo dots (ammo-type colored)
@@ -33,16 +36,16 @@ wows-minimap-renderer/
 │   ├── video.py               # FFmpegPipe + FrameWriter (async background thread for pipe I/O)
 │   └── assets.py              # Asset loading (minimaps, ship icons, consumable icons, ribbons, projectiles, ships.json, map_sizes, ship_consumables)
 ├── scripts/
-│   └── decode_gameparams.py   # Decode GameParams.data → ships.json (and optionally full dump/split)
+│   └── decode_gameparams.py   # CLI: Decode GameParams.data → JSON / split files (imports from renderer.gameparams)
 ├── bot/                       # Discord bot (slash command /render)
 │   ├── __init__.py
-│   ├── main.py                # Bot entry point — creates Bot, loads cog, syncs commands
-│   ├── config.py              # BotConfig — reads .env (DISCORD_TOKEN, GAMEDATA_PATH, MAX_WORKERS, etc.)
+│   ├── main.py                # Bot entry point — creates Bot, loads cog, async cache population at boot
+│   ├── config.py              # BotConfig — reads .env (DISCORD_TOKEN, GAMEDATA_PATH, GAMEDATA_REPO_PATH, GAMEDATA_CACHE_DIR, etc.)
 │   ├── cog_render.py          # RenderCog — /render slash command, async progress polling, file upload/download
 │   └── worker.py              # render_replay() — picklable function for ProcessPoolExecutor
 ├── render_quick.py            # Quick render: all layers, 20x speed, 1080px → output.mp4
 ├── profile_frames.py          # Per-frame timing profiler for render pipeline analysis
-├── Dockerfile                 # Multi-stage build (builder + slim runtime with ffmpeg/cairo)
+├── Dockerfile                 # Multi-stage build (builder + slim runtime with ffmpeg/cairo/git)
 ├── .dockerignore
 ├── pyproject.toml
 └── CLAUDE.md
@@ -69,27 +72,29 @@ wows-minimap-renderer/
 16. **trails** — Fading ship movement trails (pre-sampled at init, gap detection)
 
 ### Performance
-- **~60 fps** rendering at 1920x1104 (1080px minimap + 420px panels)
-- **~17ms/frame** average (encode 34%, team_roster 21%, ships 8%, right_panel 8%)
+- **~57 fps** rendering at 1920x1104 (1080px minimap + 420px panels)
+- **~17ms/frame** average (encode 40%, team_roster 16%, overhead 12%, right_panel 9%, ships 7%)
 - **Async FrameWriter** — pipe I/O offloaded to background thread (video.py), queue size 16
 - **FFmpeg fast preset** — 3x smaller output vs ultrafast (~5MB vs 16MB for typical match)
 - **Static background cache** — map_bg renders once at init, single cr.paint() per frame
 - **Text surface cache** — draw_cached_text() renders text to small surfaces once, blits via cr.paint()
 - **Index-based timestamps** — avoids float accumulation drift
+- **Per-version gamedata cache** — immutable cache dirs, no git checkout at render time, concurrent-worker safe
+- **Lazy GameParams pickle** — 15MB pickle loaded on first property access, not at construction
+- **In-memory consumable reload calc** — pre-indexed Modernization/Crew dicts, no file I/O
 
 ### Other Features
 - Ship positions (all players including self) with team colors (green=ally, red=enemy, white=self)
 - **Division mate highlighting** — gold yellow icons + roster icons for players in recording player's division (disabled in clan battles)
 - **Clan battle support** — clan tags displayed below score bar in each clan's color (majority clan ≥4 players per team)
 - **Game type in Discord message** — shows RandomBattle, ClanBattle, CooperativeBattle etc.
-- **Per-phase timing instrumentation** — parse/render/encode/upload breakdown logged after each render
+- **Per-phase timing instrumentation** — resolve/parse/setup/render/encode/upload breakdown + per-layer init timings logged after each render
 - Self player position tracking via PLAYER_ORIENTATION (0x2C) packets
 - Self-team detection and perspective swap (Trap 5)
 - **Vision-based enemy visibility** — enemies appear when first spotted via MinimapVisionEvent, not when first position packet arrives (fixes multi-second gaps)
 - Undetected enemies shown at 40% alpha (detection from visibility_flags)
 - Dead ships shown with sunk icon variant
-- ship_consumables.json loading: works with or without split/Ship directory
-- Consumable cooldown: min(gap between uses, base reload from GameParams)
+- Consumable cooldown: computed from base reload (GameParams) + modernization/skill modifiers (in-memory, no file I/O)
 - iter_states() for O(delta) incremental state queries
 - RenderConfig validation (fps, speed, crf, sizes) + str-to-Path coercion
 - Self-player typed damage breakdown (AP/HE/SAP/torp/fire/flood/secondary) via DamageReceivedStatEvent
@@ -114,12 +119,13 @@ dependencies = [
 
 ```toml
 [tool.uv.sources]
-wows-replay-parser = { git = "ssh://git@github.com/toalba/wows-replay-parser.git" }
+wows-replay-parser = { path = "../wows-replay-parser" }  # local dev; Docker uses SSH git source
 ```
 
 **External runtime dependencies:**
 - **FFmpeg** must be on PATH (used via subprocess pipe, not a Python package)
 - **Cairo** system library (pycairo is a binding, needs libcairo installed on Linux/macOS; Windows wheels include it)
+- **Git** must be on PATH (used by gamedata_cache.py for `git archive` + `git tag` to extract version-specific data)
 
 ## Data Dependencies
 
@@ -160,12 +166,51 @@ The renderer needs game assets from the wows-gamedata repo (git submodule):
 - `timings` maps category -> base reload seconds (before skills/modules)
 - `ranges` maps consumable type -> detection range in meters
 
+## Gamedata Cache System
+
+Per-version gamedata isolation using `renderer/gamedata_cache.py`. Each game version gets an immutable cache directory under `~/.cache/wows-gamedata/v{build_id}/`. No `git checkout` at render time — multiple workers can render different version replays concurrently.
+
+### How It Works
+1. Replay comes in → `resolve_for_replay()` reads JSON header, extracts build ID
+2. Cache hit (`.ready` sentinel exists) → return `VersionedGamedata` instantly (no pickle load yet)
+3. Cache miss → `git archive` extracts files from matching tag into temp dir → decode `GameParams.data` → pickle cache → atomic rename
+4. Layers access `config.effective_gamedata_path` (→ `version_dir/data/`) for file assets
+5. GameParams pickle loaded lazily on first access to `vgd.ships_db`, `vgd.modernizations`, etc.
+
+### Cache Layout
+```
+~/.cache/wows-gamedata/v{build_id}/
+├── .ready                         # sentinel
+├── gameparams.pickle              # decoded GameParams (loaded lazily)
+├── gameparams.blake2b             # hash for invalidation
+├── data/
+│   ├── scripts_entity/entity_defs/  # for parser
+│   ├── ships.json, projectiles.json, ship_consumables.json, ...
+│   ├── split/Modernization/, split/Crew/  # for consumable_calc.py
+│   ├── gui/                       # icons, ribbons, fonts
+│   ├── spaces/                    # minimaps
+│   └── global.mo                  # localization
+```
+
+### Key Components
+- **`renderer/gameparams.py`** — `decode_gameparams()` (reverse + zlib + pickle), `decode_and_cache_gameparams()` (blake2b-keyed pickle cache)
+- **`renderer/gamedata_cache.py`** — `VersionedGamedata` dataclass with `@cached_property` for ships_db/projectiles_db/ship_consumables/aircraft_icon_map/modernizations/crews, `ensure_version_cache()`, `resolve_for_replay()`, `populate_all_caches()`
+- **`renderer/config.py`** — `versioned_gamedata` field, `effective_gamedata_path` property
+- **Cold-load fallback** — `VersionedGamedata.from_gamedata_path()` decodes `GameParams.data` directly from a raw gamedata directory
+
+### Bot Startup
+`bot/main.py` runs `populate_all_caches()` as an async background task in `setup_hook` — all version tags are pre-cached before the first render request. New versions get cached lazily.
+
 ## Rendering Pipeline
 
 ```
-ParsedReplay (from wows-replay-parser)
+.wowsreplay file
     |
-    |  replay = parse_replay("battle.wowsreplay", gamedata_path)
+    |  vgd = resolve_for_replay(replay_path, gamedata_repo)  # version cache
+    |  replay = parse_replay(replay_path, vgd.entity_defs_path)
+    |
+    v
+ParsedReplay (from wows-replay-parser)
     |
     v
 GameStateAdapter
@@ -262,7 +307,7 @@ Key methods:
 | Discord bot + user interaction | `bot/` | DONE |
 | Capture points + status + progress | `capture_points.py` | DONE |
 | Total team points | `hud.py` | DONE |
-| Maintained for 1 year | Automated gamedata pipeline + gamedata_sync | DONE (auto-checkout matching version tag) |
+| Maintained for 1 year | Automated gamedata pipeline + per-version cache | DONE (git archive extraction, no checkout) |
 | Apache 2.0, WG copyright | `LICENSE` | TODO |
 
 ### Nice-to-have (P2)
@@ -298,7 +343,9 @@ Key methods:
 | Variable | Default | Description |
 |---|---|---|
 | `DISCORD_TOKEN` | (required) | Bot token |
-| `GAMEDATA_PATH` | `wows-gamedata/data` | Path to game assets |
+| `GAMEDATA_PATH` | `wows-gamedata/data` | Path to game assets (fallback) |
+| `GAMEDATA_REPO_PATH` | `wows-gamedata` | Path to wows-gamedata git repo (for version cache) |
+| `GAMEDATA_CACHE_DIR` | `~/.cache/wows-gamedata` | Override cache directory |
 | `MAX_WORKERS` | `2` | Concurrent render processes |
 | `RENDER_TIMEOUT` | `120` | Seconds before render is cancelled |
 | `COOLDOWN_SECONDS` | `60` | Per-user rate limit |
@@ -338,10 +385,11 @@ All parameters are validated in `__post_init__()`. String paths are auto-coerced
 ```bash
 # Setup
 cd wows-renderer
+git submodule update --init --recursive
 uv venv && source .venv/bin/activate
-uv pip install -e "."
+uv sync
 
-# Quick render (all layers, 20x, 1080px)
+# Quick render (auto-resolves gamedata version from replay, caches on first run)
 python render_quick.py battle.wowsreplay output.mp4
 
 # Profile render performance (per-layer timing breakdown)
@@ -351,13 +399,10 @@ python profile_frames.py battle.wowsreplay /tmp/profile.mp4
 python -m bot.main
 # or: wows-bot
 
-# Docker
-eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_rsa
-DOCKER_BUILDKIT=1 docker build --ssh default -t wows-renderer .
-docker run --env-file .env wows-renderer
-
-# Update parser
-uv pip install "wows-replay-parser @ git+ssh://git@github.com/toalba/wows-replay-parser.git" --reinstall
+# Docker (server — see docker-compose.yml for volume mounts)
+eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519
+DOCKER_BUILDKIT=1 docker compose build --ssh default
+docker compose up -d
 ```
 
 ## Remaining Work
@@ -372,7 +417,7 @@ uv pip install "wows-replay-parser @ git+ssh://git@github.com/toalba/wows-replay
 
 ### Nice-to-have (P2)
 7. Dual perspective merge — parser `merge.py` is complete, renderer integration not started
-8. ~~Version-awareness for gamedata~~ DONE (gamedata_sync auto-checkouts matching tag)
+8. ~~Version-awareness for gamedata~~ DONE (per-version cache with GameParams pickle, git archive extraction, concurrent-worker safe)
 
 ### Toolkit-inspired features (P2)
 Compared against wows-toolkit 0.1.65 renderer (2026-04-07). Items where toolkit is ahead.

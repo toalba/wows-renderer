@@ -9,3 +9,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./wows-gamedata:/app/wows-gamedata:ro
+      - ./.git/modules/wows-gamedata:/app/.git/modules/wows-gamedata:ro
+      - gamedata-cache:/root/.cache/wows-gamedata
+
+volumes:
+  gamedata-cache:

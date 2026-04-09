@@ -26,6 +26,7 @@ FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
+    git \
     ffmpeg \
     fontconfig \
     && rm -rf /var/lib/apt/lists/*
@@ -39,6 +40,8 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Copy application code + gamedata
 COPY renderer/ renderer/
 COPY bot/ bot/
+COPY scripts/ scripts/
+COPY render_quick.py ./
 COPY wows-gamedata/ wows-gamedata/
 
 # Install WoWS fonts for correct text rendering

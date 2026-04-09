@@ -5,6 +5,13 @@ All notable changes to `wows-minimap-renderer` are documented here.
 ## [Unreleased]
 
 ### Added
+- **Per-version gamedata cache** — isolated cache directories per game version under `~/.cache/wows-gamedata/v{build_id}/`. No `git checkout` at render time — concurrent workers can render different version replays simultaneously. Uses `git archive` for extraction, GameParams decoded to blake2b-keyed pickle cache.
+- **GameParams.data decode + pickle caching** — `renderer/gameparams.py` decodes the binary (reverse + zlib + Python 2 pickle), caches result as standard pickle. Warm load is a single `pickle.load()` call.
+- **VersionedGamedata dataclass** — lazy `@cached_property` for ships_db, projectiles_db, ship_consumables, aircraft_icon_map, modernizations, crews. GameParams pickle loaded on first property access, not at construction.
+- **In-memory consumable reload calculation** — `compute_effective_reloads_from_data()` in parser uses pre-indexed Modernization/Crew dicts instead of scanning 762 split JSON files. TeamRosterLayer init: 7s → 2s on ARM.
+- **Async cache population at bot boot** — `populate_all_caches()` runs as background asyncio task in `setup_hook`, pre-caching all known version tags.
+- **Detailed per-phase timing** — resolve/parse/setup/render/encode/upload breakdown + per-layer init timings logged after each render.
+- **Cold-load fallback** — `VersionedGamedata.from_gamedata_path()` decodes GameParams.data directly from a raw gamedata directory without git.
 - **Arms Race support** — buff drop icons from GameParams + BattleLogic state history
 - **Aircraft icons from GameParams** — `aircraft_icons.json` maps `params_id` to correct icon (consumable fighters vs CV attack fighters)
 - **Smoke puff FIFO lifecycle** — puffs expire individually instead of all at once
@@ -14,6 +21,7 @@ All notable changes to `wows-minimap-renderer` are documented here.
 - **Ribbon icons from parser** — derived from parser ribbon API instead of manual mapping
 
 ### Fixed
+- **CONSUMABLE_TYPE_ID_MAP mutation bug** — dict was reassigned instead of mutated in-place, causing `consumables.py` to hold a stale empty reference. Fixed with `.clear()` + `.update()`.
 - Team color perspective swap in 6 layers + dead ship orientation
 - Smoke puffs now expire individually (FIFO) instead of all at once
 
