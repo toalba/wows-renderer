@@ -46,7 +46,8 @@ class TeamRosterLayer(Layer):
         super().initialize(ctx)
 
         # Load damage widget icons
-        icon_dir = ctx.config.gamedata_path / "gui" / "battle_hud" / "damage_widget"
+        gp = ctx.config.effective_gamedata_path
+        icon_dir = gp / "gui" / "battle_hud" / "damage_widget"
         self._stat_icons: dict[str, cairo.ImageSurface] = {}
         for key, filename in [
             ("damage",   "icon_counter_caused_damage"),
@@ -62,7 +63,7 @@ class TeamRosterLayer(Layer):
                     pass
 
         # Load frags (kills) icon
-        frags_path = ctx.config.gamedata_path / "gui" / "fla" / "battle_loading" / "frags.png"
+        frags_path = gp / "gui" / "fla" / "battle_loading" / "frags.png"
         if frags_path.exists():
             try:
                 self._stat_icons["frags"] = cairo.ImageSurface.create_from_png(str(frags_path))
@@ -71,7 +72,7 @@ class TeamRosterLayer(Layer):
 
         # Load consumable icons (same logic as ConsumableLayer)
         from renderer.assets import load_consumable_icons
-        all_icons = load_consumable_icons(ctx.config.gamedata_path)
+        all_icons = load_consumable_icons(gp)
         self._cons_icons: dict[int, cairo.ImageSurface] = {}  # cons_id → icon
         for type_id, type_name in CONSUMABLE_TYPE_ID_MAP.items():
             candidates = CONSUMABLE_TYPE_TO_ICONS.get(type_name, [])
@@ -109,7 +110,7 @@ class TeamRosterLayer(Layer):
                 exterior_ids=player.ship_config.exteriors,
                 learned_skill_ids=learned,
                 crew_id=player.crew_id,
-                gamedata_path=ctx.config.gamedata_path / "scripts_entity" / "entity_defs",
+                gamedata_path=gp / "scripts_entity" / "entity_defs",
             )
             if reloads:
                 self._entity_reload[entity_id] = reloads

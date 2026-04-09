@@ -54,7 +54,7 @@ class KillfeedLayer(Layer):
         super().initialize(ctx)
 
         # Load frag icons
-        icon_dir = Path(ctx.config.gamedata_path) / "gui" / "battle_hud" / "icon_frag"
+        icon_dir = Path(ctx.config.effective_gamedata_path) / "gui" / "battle_hud" / "icon_frag"
         self._icons: dict[str, cairo.ImageSurface] = {}
         for _, (_, icon_name) in _DEATH_REASON.items():
             if icon_name and icon_name not in self._icons:

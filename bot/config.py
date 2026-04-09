@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 class BotConfig:
     discord_token: str
     gamedata_path: Path = Path("wows-gamedata/data")
+    gamedata_repo_path: Path = Path("wows-gamedata")
+    cache_root: Path | None = None  # None = ~/.cache/wows-gamedata/
     max_upload_mb: int = 50
     max_workers: int = 2
     render_timeout: int = 120
@@ -27,9 +29,12 @@ class BotConfig:
         token = os.environ.get("DISCORD_TOKEN")
         if not token:
             raise RuntimeError("DISCORD_TOKEN environment variable is required")
+        cache_root_str = os.environ.get("GAMEDATA_CACHE_DIR")
         return cls(
             discord_token=token,
             gamedata_path=Path(os.environ.get("GAMEDATA_PATH", "wows-gamedata/data")).resolve(),
+            gamedata_repo_path=Path(os.environ.get("GAMEDATA_REPO_PATH", "wows-gamedata")).resolve(),
+            cache_root=Path(cache_root_str).resolve() if cache_root_str else None,
             max_upload_mb=int(os.environ.get("MAX_UPLOAD_MB", "50")),
             max_workers=int(os.environ.get("MAX_WORKERS", "2")),
             render_timeout=int(os.environ.get("RENDER_TIMEOUT", "120")),

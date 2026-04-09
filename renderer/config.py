@@ -1,6 +1,10 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from renderer.gamedata_cache import VersionedGamedata
 
 
 @dataclass
@@ -23,6 +27,7 @@ class RenderConfig:
 
     # Paths
     gamedata_path: Path = Path(".")
+    versioned_gamedata: VersionedGamedata | None = None  # takes priority over gamedata_path
 
     # Rendering
     trail_length: float = 30.0
@@ -54,6 +59,18 @@ class RenderConfig:
             raise ValueError(f"trail_length must be >= 0, got {self.trail_length}")
         if not isinstance(self.gamedata_path, Path):
             self.gamedata_path = Path(self.gamedata_path)
+
+    @property
+    def effective_gamedata_path(self) -> Path:
+        """Path for file-based assets (icons, minimaps, .mo).
+
+        Uses ``versioned_gamedata.version_dir / "data"`` if available
+        (cache layout keeps the ``data/`` prefix from the git repo),
+        else falls back to ``gamedata_path``.
+        """
+        if self.versioned_gamedata is not None:
+            return self.versioned_gamedata.version_dir / "data"
+        return self.gamedata_path
 
     @property
     def left_panel(self) -> int:

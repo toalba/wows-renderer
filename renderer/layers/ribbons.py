@@ -102,7 +102,7 @@ class RibbonLayer(Layer):
         self._seen_order: list[int] = []  # parent IDs in order of first appearance
 
         # Load icons
-        gui_dir = Path(ctx.config.gamedata_path) / "gui"
+        gui_dir = Path(ctx.config.effective_gamedata_path) / "gui"
         self._icons: dict[int, cairo.ImageSurface] = {}
         icon_paths = _build_icon_paths(gui_dir)
         self._labels = _build_ribbon_labels()

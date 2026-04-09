@@ -55,7 +55,7 @@ class PlayerHeaderLayer(Layer):
         super().initialize(ctx)
 
         ship_db = ctx.ship_db or {}
-        ship_consumables = load_ship_consumables(ctx.config.gamedata_path)
+        ship_consumables = load_ship_consumables(ctx.config.effective_gamedata_path, vgd=ctx.config.versioned_gamedata)
 
         # Find self player
         self._self_eid: int | None = None
@@ -85,7 +85,7 @@ class PlayerHeaderLayer(Layer):
                 if player.ship_id and player.ship_id in ship_db:
                     self._ship_index = ship_db[player.ship_id].get("index", "")
                     self._ship_name = get_ship_display_name(
-                        ctx.config.gamedata_path, self._ship_index,
+                        ctx.config.effective_gamedata_path, self._ship_index,
                     )
 
                 # Repair party check
@@ -100,7 +100,7 @@ class PlayerHeaderLayer(Layer):
         self._sil_dead: cairo.ImageSurface | None = None
 
         if self._ship_index:
-            bar_dir = Path(ctx.config.gamedata_path) / "gui" / "ship_bars"
+            bar_dir = Path(ctx.config.effective_gamedata_path) / "gui" / "ship_bars"
             for suffix, attr in [
                 ("_h.png", "_sil_fg"),
                 ("_h_bg.png", "_sil_bg"),

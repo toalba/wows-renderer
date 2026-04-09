@@ -113,8 +113,15 @@ def _build_ships(source_dir: Path) -> dict[str, Any]:
     return result
 
 
-def load_ships_db(gamedata_path: Path) -> dict[int, dict]:
-    """Load ships.json → {ship_id(int): {name, species, nation, level}}."""
+def load_ships_db(gamedata_path: Path, vgd: object | None = None) -> dict[int, dict]:
+    """Load ships.json → {ship_id(int): {name, species, nation, level}}.
+
+    If *vgd* (VersionedGamedata) is provided, returns its pre-built ships_db
+    directly, bypassing file I/O.
+    """
+    if vgd is not None:
+        return vgd.ships_db  # type: ignore[union-attr]
+
     global _ships_db
     if _ships_db is not None:
         return _ships_db
@@ -287,11 +294,14 @@ def _build_projectiles(source_dir: Path) -> dict[str, Any]:
     return result
 
 
-def load_projectiles_db(gamedata_path: Path) -> dict[int, dict]:
+def load_projectiles_db(gamedata_path: Path, vgd: object | None = None) -> dict[int, dict]:
     """Load projectiles.json → {params_id(int): {a: ammo_type, c: caliber_mm, s: is_secondary}}.
 
-    Ammo types: 'AP', 'HE', 'SAP'.
+    If *vgd* (VersionedGamedata) is provided, returns its pre-built projectiles_db.
     """
+    if vgd is not None:
+        return vgd.projectiles_db  # type: ignore[union-attr]
+
     global _projectiles_db
     if _projectiles_db is not None:
         return _projectiles_db
@@ -358,9 +368,10 @@ def _load_consumable_type_ids(gamedata_path: Path) -> dict[int, str]:
     if json_path.exists():
         try:
             data = json.loads(json_path.read_text(encoding="utf-8"))
-            CONSUMABLE_TYPE_ID_MAP = {
-                int(k): v for k, v in data.items() if k.isdigit()
-            }
+            CONSUMABLE_TYPE_ID_MAP.clear()
+            CONSUMABLE_TYPE_ID_MAP.update(
+                {int(k): v for k, v in data.items() if k.isdigit()}
+            )
         except (json.JSONDecodeError, ValueError) as e:
             log.warning("Failed to load consumable_type_ids.json: %s", e)
     if not CONSUMABLE_TYPE_ID_MAP:
@@ -472,18 +483,15 @@ def _build_ship_consumables(source_dir: Path) -> dict[str, Any]:
     return result
 
 
-def load_ship_consumables(gamedata_path: Path) -> dict[int, dict[str, list[str]]]:
+def load_ship_consumables(gamedata_path: Path, vgd: object | None = None) -> dict[int, dict[str, list[str]]]:
     """Load consumable loadouts per ship.
 
-    Prefers ship_consumables.json (fast, ~200KB) if available and fresh.
-    Falls back to scanning GameParams split/Ship/ + split/Ability/ (slow, reads 1171+ files).
-
-    Returns:
-        {ship_id: {"slots": ["damage_control", "hydroacoustic", ...],
-                    "abilities": ["PCY009_CrashCrewPremium", ...],
-                    "has_repair_party": True/False,
-                    "ranges": {"sonar": 5000.0, ...}}}
+    If *vgd* (VersionedGamedata) is provided, returns its pre-built ship_consumables.
+    Otherwise prefers ship_consumables.json, falls back to scanning split files.
     """
+    if vgd is not None:
+        return vgd.ship_consumables  # type: ignore[union-attr]
+
     global _ship_consumables_cache
     if _ship_consumables_cache is not None:
         return _ship_consumables_cache

@@ -17,7 +17,7 @@ wows-render = "renderer.cli:main"
 wows-bot = "bot.main:main"
 
 [tool.uv.sources]
-wows-replay-parser = { git = "ssh://git@github.com/toalba/wows-replay-parser.git" }
+wows-replay-parser = { path = "../wows-replay-parser" }
 
 [tool.hatch.build.targets.wheel]
 packages = ["renderer", "bot"]

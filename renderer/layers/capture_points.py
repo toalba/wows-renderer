@@ -92,7 +92,7 @@ class CapturePointLayer(Layer):
 
     def _load_buff_data(self, ctx: RenderContext) -> None:
         """Load buff drop icons and build zone → buff type mapping."""
-        gamedata = Path(ctx.config.gamedata_path)
+        gamedata = Path(ctx.config.effective_gamedata_path)
 
         # Load paramsId → marker name via resolver (buff_drops.json cache, split/Drop/ source)
         drops_data = resolve_json_cache(

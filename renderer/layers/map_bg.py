@@ -17,8 +17,8 @@ class MapBackgroundLayer(Layer):
         super().initialize(ctx)
         config = ctx.config
 
-        minimap_surface = load_minimap(config.gamedata_path, ctx.replay.map_name)
-        water_surface = load_minimap_water(config.gamedata_path, ctx.replay.map_name)
+        minimap_surface = load_minimap(config.effective_gamedata_path, ctx.replay.map_name)
+        water_surface = load_minimap_water(config.effective_gamedata_path, ctx.replay.map_name)
 
         scale_x = config.minimap_size / minimap_surface.get_width()
         scale_y = config.minimap_size / minimap_surface.get_height()

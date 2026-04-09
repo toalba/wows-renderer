@@ -44,8 +44,9 @@ class MinimapRenderer:
             config: Render configuration.
             entity_defs_path: Path to entity_defs dir. Defaults to
                 ``config.gamedata_path / "scripts_entity" / "entity_defs"``.
-            auto_update_gamedata: If True, auto-sync gamedata to match
-                the replay version.
+            auto_update_gamedata: Deprecated. Use ``resolve_for_replay()``
+                from ``renderer.gamedata_cache`` instead, which uses the
+                per-version cache system without git checkout.
 
         Returns:
             A MinimapRenderer with the replay already parsed and attached.
@@ -107,16 +108,17 @@ class MinimapRenderer:
         config = self.config
 
         # Build adapter and context
+        gp = config.effective_gamedata_path
         adapter = GameStateAdapter.from_replay(
             replay,
             minimap_size=config.minimap_size,
             panel_width=config.left_panel,
-            gamedata_path=config.gamedata_path,
+            gamedata_path=gp,
         )
 
         # Load ship database, icons, and consumable type IDs
-        gp = Path(config.gamedata_path)
-        ship_db = load_ships_db(gp)
+        vgd = config.versioned_gamedata
+        ship_db = load_ships_db(gp, vgd=vgd)
         ship_icons = load_ship_icons(gp, config.team_colors, config.self_color)
         _load_consumable_type_ids(gp)
 

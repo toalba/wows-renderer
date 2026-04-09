@@ -42,6 +42,7 @@ def render_replay(
 
     from renderer.config import RenderConfig
     from renderer.core import MinimapRenderer
+    from renderer.gamedata_cache import resolve_for_replay, VersionedGamedata
     from renderer.layers.map_bg import MapBackgroundLayer
     from renderer.layers.ships import ShipLayer
     from renderer.layers.hud import HudLayer
@@ -56,14 +57,21 @@ def render_replay(
     from renderer.layers.right_panel import RightPanelLayer
 
     timings: dict[str, float] = {}
-    gd = Path(gamedata_path)
+    gamedata_repo = Path(gamedata_path).parent  # gamedata_path is repo/data, parent is repo
 
     if progress_queue:
         progress_queue.put(("status", "Parsing replay..."))
 
-    # Phase 1: Parse replay (gamedata load + decrypt + decode + state tracking)
+    # Resolve version-specific gamedata
     t0 = perf_counter()
-    replay = parse_replay(replay_path, str(gd / "scripts_entity" / "entity_defs"))
+    try:
+        vgd = resolve_for_replay(replay_path, gamedata_repo)
+    except RuntimeError:
+        # Fallback: cold-load from provided gamedata directory
+        vgd = VersionedGamedata.from_gamedata_path(Path(gamedata_path))
+
+    # Phase 1: Parse replay
+    replay = parse_replay(replay_path, str(vgd.entity_defs_path))
     timings["parse"] = perf_counter() - t0
 
     if progress_queue:
@@ -79,7 +87,8 @@ def render_replay(
         right_pw = panel_width
 
     config = RenderConfig(
-        gamedata_path=gd,
+        gamedata_path=vgd.version_dir / "data",
+        versioned_gamedata=vgd,
         speed=speed,
         fps=fps,
         minimap_size=minimap_size,

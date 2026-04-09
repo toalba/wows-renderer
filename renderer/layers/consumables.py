@@ -49,8 +49,10 @@ class ConsumableLayer(Layer):
     def initialize(self, ctx: RenderContext) -> None:
         super(ConsumableLayer, self).initialize(ctx)
         from renderer.assets import load_consumable_icons, load_ship_consumables
-        all_icons = load_consumable_icons(ctx.config.gamedata_path)
-        ship_consumables = load_ship_consumables(ctx.config.gamedata_path)
+        gp = ctx.config.effective_gamedata_path
+        vgd = ctx.config.versioned_gamedata
+        all_icons = load_consumable_icons(gp)
+        ship_consumables = load_ship_consumables(gp, vgd=vgd)
 
         # Build global cons_id → icon mapping
         self._type_icons = {}

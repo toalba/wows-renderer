@@ -60,7 +60,7 @@ class ProjectileLayer(Layer):
         )
 
         # Load projectile database for ammo type + caliber
-        proj_db = load_projectiles_db(ctx.config.gamedata_path)
+        proj_db = load_projectiles_db(ctx.config.effective_gamedata_path, vgd=ctx.config.versioned_gamedata)
 
         # Build shell lifecycle data
         created = replay.events_of_type(ShotCreatedEvent)
