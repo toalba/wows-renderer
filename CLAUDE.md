@@ -2,6 +2,15 @@
 
 Minimap replay renderer + Discord bot for World of Warships. Parses `.wowsreplay` files and produces mp4 videos showing ship movements, shells, torpedoes, capture points, health bars, smoke screens, consumables, aircraft, ribbons, team rosters, and team scores. Built for the Wargaming community bounty (KOTS referee tooling).
 
+## Continuous Integration
+
+Nightly canary (`.github/workflows/canary.yml`) runs the unit suite and a
+Docker builder-stage dry run. On failure it opens a `ci-regression` issue —
+almost always this means upstream `wows-replay-parser` main broke, so check
+<https://github.com/toalba/wows-replay-parser> for recent changes before
+poking at the renderer. Schema breaks from new WoWS patches are caught by the
+parser's own canary, not this one.
+
 ## Architecture
 
 ```

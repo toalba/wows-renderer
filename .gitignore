@@ -44,3 +44,11 @@ Thumbs.db
 # GameParams research artifacts (regenerate via scripts/decode_gameparams.py)
 GameParams-*.json
 split/
+
+# Golden-image diff debug output (baseline PNGs themselves are committed)
+tests/golden_images/_diffs/
+
+# Test fixtures — see tests/fixtures/README.md
+tests/fixtures/replays/*.wowsreplay
+tests/fixtures/gamedata/
+tests/fixtures/outputs/

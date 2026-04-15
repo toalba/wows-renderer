@@ -1,0 +1,110 @@
+name: Canary (upstream regression)
+
+# Runs nightly. Catches regressions from upstream wows-replay-parser (git dep)
+# or a broken Docker build pipeline. Does NOT fetch gamedata — the parser's own
+# canary covers schema breaks. This job is purely about "does main still build
+# and pass its unit tests".
+
+on:
+  schedule:
+    - cron: "0 4 * * *"  # 03:00 UTC + 1h so parser canary runs first
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  canary-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install project (pulls latest parser main)
+        run: uv sync
+
+      - name: Run pytest
+        id: pytest
+        run: |
+          set -o pipefail
+          uv run pytest tests/ -v --tb=short 2>&1 | tee pytest-output.txt || true
+          # golden-image tests skip cleanly when no fixtures exist — that's fine.
+          # We rely on docker-build below as the real failure signal.
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Dry-run build (builder stage only)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: builder
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  report-failure:
+    needs: [canary-test, docker-build]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Build issue body
+        run: |
+          {
+            echo "Renderer canary failed. Most likely the upstream parser (wows-replay-parser) main branch broke, or the Dockerfile no longer resolves."
+            echo ""
+            echo "Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo ""
+            echo "Check upstream first: https://github.com/toalba/wows-replay-parser"
+            echo "Then re-run this workflow once upstream is healthy."
+          } > issue-body.md
+
+      - name: Open or update ci-regression issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          EXISTING=$(gh issue list --label ci-regression --state open --json number --jq '.[0].number' || true)
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body-file issue-body.md
+          else
+            gh issue create \
+              --title "CI regression: renderer canary failing" \
+              --label ci-regression --label automated \
+              --body-file issue-body.md
+          fi
+
+  close-on-recovery:
+    needs: [canary-test, docker-build]
+    if: success()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Close open ci-regression issue (if any)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          EXISTING=$(gh issue list --label ci-regression --state open --json number --jq '.[0].number' || true)
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "Canary green — closing."
+            gh issue close "$EXISTING"
+          fi

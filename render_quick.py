@@ -18,7 +18,10 @@ from renderer.layers.team_roster import TeamRosterLayer
 from renderer.layers.right_panel import RightPanelLayer
 from wows_replay_parser import parse_replay
 
-REPLAY = sys.argv[1] if len(sys.argv) > 1 else "20260322_225740_PBSD598-Black-Cossack_15_NE_north.wowsreplay"
+if len(sys.argv) < 2:
+    sys.exit("usage: render_quick.py <replay.wowsreplay> [output.mp4]")
+
+REPLAY = sys.argv[1]
 OUTPUT = sys.argv[2] if len(sys.argv) > 2 else "output.mp4"
 GAMEDATA_REPO = Path("wows-gamedata")
 

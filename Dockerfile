@@ -33,17 +33,17 @@ WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Copy application code + gamedata
+# Copy application code.
+# NOTE: wows-gamedata is NOT baked into the image — it is volume-mounted at
+# runtime (see docker-compose.yml). This keeps the image small and lets a
+# single image serve many game versions via the per-version gamedata cache.
+# WoWS fonts live inside the gamedata mount; if correct font rendering is
+# required, install them on the host or via an entrypoint hook that runs
+# `fc-cache -f` against the mounted directory.
 COPY renderer/ renderer/
 COPY bot/ bot/
 COPY scripts/ scripts/
 COPY render_quick.py ./
-COPY wows-gamedata/ wows-gamedata/
-
-# Install WoWS fonts for correct text rendering
-RUN mkdir -p /usr/local/share/fonts/wows && \
-    cp wows-gamedata/data/gui/fonts/*.ttf /usr/local/share/fonts/wows/ && \
-    fc-cache -f
 
 # Re-install the project itself (editable install needs the source)
 COPY pyproject.toml ./
