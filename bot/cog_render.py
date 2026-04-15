@@ -129,7 +129,7 @@ class RenderCog(commands.Cog):
                     await interaction.edit_original_response(content=new_msg)
 
             # Collect result (raises if worker crashed)
-            _, replay_duration, timings, game_version, num_players, game_type = await future
+            _, replay_duration, timings, game_version, num_players, game_type, build_urls = await future
             elapsed = time.monotonic() - t_start
 
             # Format durations
@@ -154,6 +154,25 @@ class RenderCog(commands.Cog):
                     attachments=[discord.File(str(output_path), filename="minimap.mp4")],
                 )
             upload_time = time.perf_counter() - t_upload_start
+
+            # Send build links as follow-up embed
+            if build_urls:
+                try:
+                    team0: list[str] = []
+                    team1: list[str] = []
+                    for name, ship, team, url in build_urls:
+                        line = f"[{name}]({url}) — {ship}" if url else f"{name} — {ship}"
+                        (team0 if team == 0 else team1).append(line)
+
+                    embed = discord.Embed(title="Ship Builds", color=0x3498db)
+                    if team0:
+                        embed.add_field(name="Allies", value="\n".join(team0), inline=True)
+                    if team1:
+                        embed.add_field(name="Enemies", value="\n".join(team1), inline=True)
+                    embed.set_footer(text="Click a name to view their build on WoWs ShipBuilder")
+                    await interaction.followup.send(embed=embed)
+                except Exception as e:
+                    log.warning("Failed to send build embed: %s", e)
 
             # Log timing breakdown
             resolve_time = timings.get("resolve", 0)
