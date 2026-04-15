@@ -189,7 +189,7 @@ def _rgba_to_hex(r: float, g: float, b: float) -> str:
 def load_ship_icons(
     gamedata_path: Path,
     team_colors: dict[int, tuple[float, float, float, float]] | None = None,
-    self_color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0),
+    self_color: tuple[float, float, float, float] | None = (1.0, 1.0, 1.0, 1.0),
 ) -> dict[str, dict[str, cairo.ImageSurface]]:
     """Load ship class icons from SVG minimap assets, tinted per team.
 
@@ -207,7 +207,7 @@ def load_ship_icons(
         }
     ally_hex = _rgba_to_hex(*team_colors[0][:3])
     enemy_hex = _rgba_to_hex(*team_colors[1][:3])
-    self_hex = _rgba_to_hex(*self_color[:3])
+    self_hex = _rgba_to_hex(*self_color[:3]) if self_color is not None else "#ffffff"
 
     svg_dir = gamedata_path / "gui" / "fla" / "minimap" / "ship_icons"
     icons: dict[str, dict[str, cairo.ImageSurface]] = {}

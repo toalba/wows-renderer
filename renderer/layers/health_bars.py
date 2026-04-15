@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import cairo
 
-from renderer.layers.base import Layer, RenderContext, FONT_FAMILY
+from renderer.layers.base import Layer, BaseRenderContext, FONT_FAMILY
 
 
 class HealthBarLayer(Layer):
@@ -28,7 +28,7 @@ class HealthBarLayer(Layer):
     _entity_ship_names: dict[int, str]
     _has_repair_party: dict[int, bool]
 
-    def initialize(self, ctx: RenderContext) -> None:
+    def initialize(self, ctx: BaseRenderContext) -> None:
         super().initialize(ctx)
         self._entity_ship_names = {}
         self._has_repair_party = {}

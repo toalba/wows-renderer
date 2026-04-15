@@ -5,7 +5,13 @@ import math
 
 import cairo
 
-from renderer.layers.base import Layer, RenderContext, FONT_FAMILY, _font_for_text
+from renderer.layers.base import (
+    Layer,
+    BaseRenderContext,
+    SingleRenderContext,
+    FONT_FAMILY,
+    _font_for_text,
+)
 
 
 # Species name from ships.json → icon key
@@ -42,7 +48,7 @@ class ShipLayer(Layer):
     SPOTTED_GLOW_RADIUS = 1.1  # outline offset in pixels at 760px reference
     SPOTTED_GLOW_ALPHA = 0.45
 
-    def initialize(self, ctx: RenderContext) -> None:
+    def initialize(self, ctx: BaseRenderContext) -> None:
         super().initialize(ctx)
         # Build entity_id → species icon key lookup
         self._entity_species: dict[int, str] = {}
@@ -69,38 +75,33 @@ class ShipLayer(Layer):
         self._target_yaws: dict[int, list[float]] = {}
         self._build_target_yaw_timeline(ctx)
 
-    def _build_camera_yaw_timeline(self, ctx: RenderContext) -> None:
-        """Extract camera yaw from CAMERA packet quaternions."""
-        from wows_replay_parser.packets.types import PacketType
-        for packet in ctx.replay.packets:
-            if packet.type != PacketType.CAMERA:
-                continue
-            rot = getattr(packet, "camera_rotation", None)
-            if rot is None:
-                continue
-            qx, qy, qz, qw = rot
-            siny_cosp = 2.0 * (qw * qy + qx * qz)
-            cosy_cosp = 1.0 - 2.0 * (qy * qy + qx * qx)
-            yaw = math.atan2(siny_cosp, cosy_cosp)
-            self._camera_times.append(packet.timestamp)
-            self._camera_yaws.append(yaw)
+    def _build_camera_yaw_timeline(self, ctx: BaseRenderContext) -> None:
+        """Extract camera yaw timeline from the ReplaySource helper.
 
-    def _build_target_yaw_timeline(self, ctx: RenderContext) -> None:
-        """Build gun aim yaw timeline from targetLocalPos property changes."""
-        TWO_PI = 2.0 * math.pi
-        tracker = ctx.replay.tracker
-        for change in tracker.property_changes_by_name("targetLocalPos"):
-            val = change.new_value
-            if val is None or val == 65535:
+        ``camera_yaw_timeline`` is ``None`` when the replay has no self
+        camera (e.g. merged dual-perspective replays with no single
+        recording POV) — in that case we skip camera-based rendering.
+        """
+        cam = getattr(ctx.replay, "camera_yaw_timeline", None)
+        if cam is None:
+            return
+        for t, yaw in cam:
+            self._camera_times.append(float(t))
+            self._camera_yaws.append(float(yaw))
+
+    def _build_target_yaw_timeline(self, ctx: BaseRenderContext) -> None:
+        """Build gun aim yaw timeline from the ReplaySource helper."""
+        aim = getattr(ctx.replay, "aim_yaw_timeline", None) or {}
+        for eid, entries in aim.items():
+            if not entries:
                 continue
-            lo = int(val) & 0xFF
-            yaw = (lo / 256.0) * TWO_PI - math.pi
-            eid = change.entity_id
-            if eid not in self._target_times:
-                self._target_times[eid] = []
-                self._target_yaws[eid] = []
-            self._target_times[eid].append(change.timestamp)
-            self._target_yaws[eid].append(yaw)
+            times: list[float] = []
+            yaws: list[float] = []
+            for t, yaw in entries:
+                times.append(float(t))
+                yaws.append(float(yaw))
+            self._target_times[eid] = times
+            self._target_yaws[eid] = yaws
 
     def _get_camera_yaw(self, timestamp: float) -> float | None:
         """Look up camera yaw at a given timestamp (nearest earlier sample)."""
@@ -125,6 +126,11 @@ class ShipLayer(Layer):
         config = self.ctx.config
         icons = self.ctx.ship_icons or {}
 
+        # Self-highlight / division highlight only exist in single-replay
+        # contexts. In dual (merged) contexts there is no recording player.
+        is_single = isinstance(self.ctx, SingleRenderContext)
+        division_mates: set[int] = self.ctx.division_mates if is_single else set()
+
         for entity_id, ship in state.ships.items():
             if not self.ctx.is_visible(entity_id, timestamp):
                 continue
@@ -135,11 +141,11 @@ class ShipLayer(Layer):
             relation = player.relation if player else 2
 
             # Team color for fallback / name coloring
-            is_div_mate = entity_id in self.ctx.division_mates
-            if relation == 0:
+            is_div_mate = entity_id in division_mates
+            if relation == 0 and is_single:
                 team_color = config.self_color
                 icon_variant = "white"
-            elif relation == 1:
+            elif relation == 1 or (relation == 0 and not is_single):
                 team_color = config.division_color if is_div_mate else config.team_colors.get(0, (0.33, 0.85, 0.33, 1.0))
                 icon_variant = "ally"
             else:

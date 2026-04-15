@@ -4,7 +4,7 @@ from bisect import bisect_left, bisect_right
 
 import cairo
 
-from renderer.layers.base import Layer, RenderContext
+from renderer.layers.base import Layer, BaseRenderContext, SingleRenderContext
 
 
 class TrailLayer(Layer):
@@ -32,7 +32,7 @@ class TrailLayer(Layer):
     _trail_colors: dict[int, tuple[float, float, float]]
     _trail_gaps: dict[int, set[int]]  # entity_id → set of indices where a gap starts
 
-    def initialize(self, ctx: RenderContext) -> None:
+    def initialize(self, ctx: BaseRenderContext) -> None:
         super().initialize(ctx)
         self._trail_times = {}
         self._trail_pixels = {}
@@ -43,8 +43,9 @@ class TrailLayer(Layer):
         w2p = ctx.world_to_pixel
 
         # Pre-compute team color per entity (doesn't change)
+        is_single = isinstance(ctx, SingleRenderContext)
         for entity_id, player in ctx.player_lookup.items():
-            if player.relation == 0:
+            if is_single and player.relation == 0:
                 r, g, b, _ = ctx.config.self_color
             else:
                 display_team = ctx.raw_to_display_team(player.team_id)

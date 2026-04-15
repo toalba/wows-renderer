@@ -1,6 +1,6 @@
 from __future__ import annotations
 import cairo
-from renderer.layers.base import Layer, RenderContext, FONT_FAMILY
+from renderer.layers.base import Layer, BaseRenderContext, FONT_FAMILY
 from renderer.assets import load_minimap, load_minimap_water
 
 
@@ -13,7 +13,7 @@ class MapBackgroundLayer(Layer):
 
     _bg_cache: cairo.ImageSurface | None = None
 
-    def initialize(self, ctx: RenderContext) -> None:
+    def initialize(self, ctx: BaseRenderContext) -> None:
         super().initialize(ctx)
         config = ctx.config
 

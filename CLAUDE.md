@@ -236,6 +236,10 @@ FrameWriter -> FFmpegPipe
 output.mp4
 ```
 
+## Dual Perspective Rendering
+
+Entry point: `python render_dual.py a.wowsreplay b.wowsreplay output.mp4`. Both replays must come from the same match (parser's `merge_replays` validates `arenaUniqueId` and map_name). `DualMinimapRenderer` consumes the `MergedReplay` identically to a `ParsedReplay` via the `ReplaySource` protocol. Drops self-centric layers (`player_header`, `damage_stats`, `ribbons`, `killfeed`, `right_panel`). Neutral observer mode: no Trap-5 perspective swap — team 0 = green/left, team 1 = red/right regardless of either recorder's side. `division_mates` is empty (no recording player in merged view).
+
 ## Layer System
 
 Each visual element is a separate Layer. All layers draw onto a **shared cairo.Context** — no separate images, no alpha compositing step. Layers are composited in add order (first = bottom).
@@ -416,7 +420,7 @@ docker compose up -d
 6. ~~Visual polish + edge case handling~~ DONE (visibility, smoke lifecycle, aircraft icons, SVG ship icons)
 
 ### Nice-to-have (P2)
-7. Dual perspective merge — parser `merge.py` is complete, renderer integration not started
+7. Dual perspective merge — **IN PROGRESS** (core working, needs paired-replay validation). See "Dual Perspective Rendering" below.
 8. ~~Version-awareness for gamedata~~ DONE (per-version cache with GameParams pickle, git archive extraction, concurrent-worker safe)
 
 ### Toolkit-inspired features (P2)

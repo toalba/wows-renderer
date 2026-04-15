@@ -1,7 +1,7 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import ClassVar, TYPE_CHECKING
 
 import cairo
 
@@ -31,27 +31,34 @@ def _font_for_text(text: str) -> str:
     return FONT_FAMILY_CJK if _has_cjk(text) else FONT_FAMILY
 
 if TYPE_CHECKING:
-    from wows_replay_parser.api import ParsedReplay
+    from wows_replay_parser.interfaces import ReplaySource
     from wows_replay_parser.roster import PlayerInfo
     from renderer.config import RenderConfig
 
 
 @dataclass
-class RenderContext:
-    """Shared context passed to all layers during initialization."""
+class BaseRenderContext:
+    """Base render context with fields common to single and dual renderers.
+
+    Shared infrastructure only: config, replay source, map size, player lookup,
+    ship database / icons. No self-player / division / perspective-swap data —
+    those live on :class:`SingleRenderContext`. No dual-specific metadata —
+    that lives on :class:`DualRenderContext`.
+
+    Subclasses must implement :meth:`raw_to_display_team` to map raw team ids
+    from game data into display teams (0 = left/ally, 1 = right/enemy).
+    """
     config: RenderConfig
-    replay: ParsedReplay
+    replay: ReplaySource
     map_size: float  # space_size from map_sizes.json
     player_lookup: dict[int, PlayerInfo]  # entity_id -> PlayerInfo
     ship_db: dict[int, dict] | None = None  # ship_id -> {name, species, nation, level}
     ship_icons: dict[str, dict] | None = None  # species -> {ally/enemy/white: cairo.ImageSurface}
     first_seen: dict[int, float] | None = None  # entity_id -> first position timestamp
-    _self_team_raw: int | None = None  # raw team_id of the recording player
-    division_mates: set[int] | None = None  # entity_ids in recording player's division (excl self)
 
     # Scale factor relative to 760px reference resolution.
     # All font sizes, icon sizes, offsets, line widths should multiply by this.
-    _REFERENCE_SIZE: int = 760
+    _REFERENCE_SIZE: ClassVar[int] = 760
 
     @property
     def scale(self) -> float:
@@ -61,54 +68,17 @@ class RenderContext:
     def __post_init__(self) -> None:
         if self.first_seen is None:
             self.first_seen = self._build_first_seen()
-        if self._self_team_raw is None:
-            self._self_team_raw = self._detect_self_team_raw()
-        if self.division_mates is None:
-            self.division_mates = self._build_division_mates()
 
     def _build_first_seen(self) -> dict[int, float]:
         """Build lookup of first real visibility per entity.
 
-        Allies (relation 0, 1): use first position timestamp (always valid).
-        Enemies (relation 2): use first MinimapVisionEvent where is_visible=True,
-        falling back to the first real position timestamp. Vision events arrive
-        before position packets, so this avoids the 1-second gap where an enemy
-        is spotted but has no position data yet.
+        Uses the precomputed ``replay.first_seen`` mapping provided by the
+        ReplaySource protocol.
         """
-        tracker = self.replay.tracker
-        if tracker is None:
+        fs = getattr(self.replay, "first_seen", None)
+        if fs is None:
             return {}
-        positions = tracker.positions_dict
-        minimap = tracker.minimap_positions_dict
-        result: dict[int, float] = {}
-
-        for entity_id, pos_list in positions.items():
-            if not pos_list:
-                continue
-            player = self.player_lookup.get(entity_id)
-
-            if player and player.relation == 2:
-                # Enemy: prefer first vision event (spotted) timestamp
-                first_vision_t = float("inf")
-                mm_entries = minimap.get(entity_id, [])
-                for entry in mm_entries:
-                    # entry: (timestamp, world_x, world_z, heading_rad, is_visible, is_disappearing)
-                    if entry[4] and not entry[5]:  # is_visible and not is_disappearing
-                        first_vision_t = entry[0]
-                        break
-
-                # Fall back to first real position (skip t<1.0 fakes)
-                first_pos_t = float("inf")
-                for pos in pos_list:
-                    if pos[0] >= 1.0:
-                        first_pos_t = pos[0]
-                        break
-
-                result[entity_id] = min(first_vision_t, first_pos_t)
-            else:
-                # Ally/self: first position is always valid
-                result[entity_id] = pos_list[0][0]
-        return result
+        return dict(fs)
 
     def is_visible(self, entity_id: int, timestamp: float) -> bool:
         """Check if an entity should be rendered at this timestamp."""
@@ -116,6 +86,62 @@ class RenderContext:
         if first_t is None:
             return True  # unknown entity, show it
         return timestamp >= first_t
+
+    def raw_to_display_team(self, raw_team_id: int) -> int:
+        """Map a raw team_id from game data to a display team (0=left, 1=right).
+
+        Subclasses implement the perspective logic. :class:`SingleRenderContext`
+        performs the self-player Trap 5 swap; :class:`DualRenderContext` is an
+        identity mapping.
+        """
+        raise NotImplementedError(
+            "raw_to_display_team must be implemented by a subclass "
+            "(SingleRenderContext or DualRenderContext)"
+        )
+
+    def world_to_pixel(self, world_x: float, world_z: float) -> tuple[float, float]:
+        """Convert world coordinates to pixel coordinates on the full canvas.
+
+        Uses the WoWs community formula:
+            pixel_x = pos_x * scaling + half_minimap
+            pixel_y = -pos_z * scaling + half_minimap  (Z axis inverted)
+        where scaling = minimap_size / space_size
+        """
+        scaling = self.config.minimap_size / self.map_size
+        half_mm = self.config.minimap_size / 2.0
+        px = world_x * scaling + half_mm + self.config.left_panel
+        py = -world_z * scaling + half_mm + self.config.hud_height
+        return (px, py)
+
+
+@dataclass
+class SingleRenderContext(BaseRenderContext):
+    """Render context for a single-perspective replay.
+
+    Carries recording-player identity and the derived data layers need to
+    highlight the self ship, division mates, and perform the team-id swap
+    (Trap 5) when the recording player's raw team is 1.
+    """
+    recording_player_id: int | None = None
+    _self_team_raw: int | None = None  # raw team_id of the recording player
+    division_mates: set[int] | None = None  # entity_ids in recording player's division (excl self)
+    # Mirrored from config for layer convenience; always populated.
+    self_color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)
+    division_color: tuple[float, float, float, float] = (1.0, 0.84, 0.0, 1.0)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self._self_team_raw is None:
+            self._self_team_raw = self._detect_self_team_raw()
+        if self.division_mates is None:
+            self.division_mates = self._build_division_mates()
+        # If caller did not override, take colors from config.
+        # (Dataclass default sentinels would be ambiguous for tuples, so we
+        # simply pull from config when the caller passed the defaults.)
+        if self.self_color == (1.0, 1.0, 1.0, 1.0):
+            self.self_color = self.config.self_color
+        if self.division_color == (1.0, 0.84, 0.0, 1.0):
+            self.division_color = self.config.division_color
 
     def _detect_self_team_raw(self) -> int:
         """Detect the raw team_id of the recording player.
@@ -183,19 +209,36 @@ class RenderContext:
             return 0  # Self team → display 0 (ally/green)
         return 1  # Other team → display 1 (enemy/red)
 
-    def world_to_pixel(self, world_x: float, world_z: float) -> tuple[float, float]:
-        """Convert world coordinates to pixel coordinates on the full canvas.
 
-        Uses the WoWs community formula:
-            pixel_x = pos_x * scaling + half_minimap
-            pixel_y = -pos_z * scaling + half_minimap  (Z axis inverted)
-        where scaling = minimap_size / space_size
-        """
-        scaling = self.config.minimap_size / self.map_size
-        half_mm = self.config.minimap_size / 2.0
-        px = world_x * scaling + half_mm + self.config.left_panel
-        py = -world_z * scaling + half_mm + self.config.hud_height
-        return (px, py)
+@dataclass
+class DualRenderContext(BaseRenderContext):
+    """Render context for a merged dual-perspective replay.
+
+    Neither side is "self": team 0 always renders as the left/green team and
+    team 1 as the right/red team. No self-player highlighting, no division
+    mates, no perspective swap. Self-centric layers (``player_header``,
+    ``damage_stats``, ``ribbons``, ``killfeed``, ``right_panel``) are never
+    instantiated in a dual render.
+    """
+    replay_a_meta: dict | None = None  # optional labeling for the left side
+    replay_b_meta: dict | None = None  # optional labeling for the right side
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.replay_a_meta is None:
+            self.replay_a_meta = {}
+        if self.replay_b_meta is None:
+            self.replay_b_meta = {}
+
+    def raw_to_display_team(self, raw_team_id: int) -> int:
+        """Identity mapping: team 0 → display 0 (left/green), team 1 → display 1."""
+        return raw_team_id
+
+
+# Backwards-compatible alias: existing layer code and external callers (e.g.
+# worker processes, tests) that reference ``RenderContext`` keep working and
+# continue to see the single-renderer shape they expect.
+RenderContext = SingleRenderContext
 
 
 class Layer(ABC):
@@ -205,7 +248,7 @@ class Layer(ABC):
     Layers are composited in order (first added = bottom).
     """
 
-    def initialize(self, ctx: RenderContext) -> None:
+    def initialize(self, ctx: BaseRenderContext) -> None:
         """Called once before rendering. Preload assets, cache data.
 
         Default implementation stores the context. Override to add custom init.

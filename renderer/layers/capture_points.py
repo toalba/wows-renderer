@@ -7,7 +7,7 @@ from pathlib import Path
 import cairo
 
 from renderer.gamedata_resolver import resolve_json_cache
-from renderer.layers.base import Layer, RenderContext, FONT_FAMILY
+from renderer.layers.base import Layer, BaseRenderContext, FONT_FAMILY
 
 
 def _build_buff_drops(source_dir: Path) -> dict:
@@ -55,7 +55,7 @@ class CapturePointLayer(Layer):
     # Zone types to skip rendering (wards/ASW zones from carrier consumables)
     _SKIP_TYPES = {12}
 
-    def initialize(self, ctx: RenderContext) -> None:
+    def initialize(self, ctx: BaseRenderContext) -> None:
         super().initialize(ctx)
         # Pre-build a sorted cap order from early game state for label assignment.
         # This only determines the A/B/C/D letter mapping, not visibility.
@@ -67,9 +67,14 @@ class CapturePointLayer(Layer):
         self._zone_buff_type: dict[int, str] = {}  # zone_eid -> marker name
         self._load_buff_data(ctx)
 
-    def _build_label_order(self, ctx: RenderContext) -> None:
-        """Assign cap letters by scanning states at a few timestamps."""
-        tracker = ctx.replay.tracker
+    def _build_label_order(self, ctx: BaseRenderContext) -> None:
+        """Assign cap letters by scanning states at a few timestamps.
+
+        Uses replay.zone_positions for per-zone position timelines to break
+        ties between caps sharing the same point_index. Zones absent from
+        zone_positions (no recoverable position) are skipped.
+        """
+        zone_positions = ctx.replay.zone_positions
         seen: dict[int, tuple[float, int]] = {}  # eid -> (x_pos, point_index)
 
         for t in (10.0, 30.0, 60.0, 300.0, 600.0):
@@ -78,19 +83,27 @@ class CapturePointLayer(Layer):
                 eid = cap.entity_id
                 if eid in seen:
                     continue
-                # Skip non-capture zones (buffs, wards)
-                zone_type = self._get_zone_type(tracker, eid)
-                if zone_type in self._SKIP_TYPES or zone_type == 6:
+                # Skip non-capture zones (buffs, wards) via CapturePointState.point_type
+                if cap.point_type in self._SKIP_TYPES or cap.point_type == 6:
                     continue
-                pos = tracker.position_at(eid, t)
-                x = pos[0] if pos else 0.0
+                timeline = zone_positions.get(eid)
+                if not timeline:
+                    # No recoverable position for this zone — skip.
+                    continue
+                # Pick the sample with t_sample <= t, else earliest sample.
+                x = timeline[0][1]
+                for ts, tx, _tz in timeline:
+                    if ts <= t:
+                        x = tx
+                    else:
+                        break
                 idx = cap.point_index if cap.point_index >= 0 else 999
                 seen[eid] = (x, idx)
 
         # Sort by point_index first, then x position
         self._cap_label_order = sorted(seen, key=lambda e: (seen[e][1], seen[e][0]))
 
-    def _load_buff_data(self, ctx: RenderContext) -> None:
+    def _load_buff_data(self, ctx: BaseRenderContext) -> None:
         """Load buff drop icons and build zone → buff type mapping."""
         gamedata = Path(ctx.config.effective_gamedata_path)
 
@@ -113,45 +126,53 @@ class CapturePointLayer(Layer):
                 except Exception:
                     pass
 
-        # Build zone_eid → marker name from BattleLogic state property history.
-        # Each change to the BattleLogic 'state' property includes drop.data
-        # with active buff zones and their paramsIds.
-        tracker = ctx.replay.tracker
-        bl_eids = tracker.get_entities_by_type("BattleLogic")
-        bl_eid = bl_eids[0] if bl_eids else None
-        if bl_eid is None or not self._buff_drops:
+        # Build zone_eid → marker name by sampling GameState across the match.
+        # state.buff_zones carries params_id + zone_id per active buff drop, and
+        # state.battle.drop_state keeps the last-seen raw drop payload from
+        # BattleLogic's 'state' property.
+        if not self._buff_drops:
             return
 
-        for change in tracker.property_history(bl_eid, "state"):
-            # Check both old_value (catches initial state) and new_value
-            for val in (change.old_value, change.new_value):
-                if not isinstance(val, dict):
-                    continue
-                drop = val.get("drop")
-                if not isinstance(drop, dict):
-                    continue
-                data = drop.get("data", [])
-                if not isinstance(data, list):
-                    continue
-                for item in data:
-                    if not isinstance(item, dict):
-                        continue
-                    zid = item.get("zoneId", 0)
-                    pid = item.get("paramsId", 0)
-                    if zid and pid and zid not in self._zone_buff_type:
-                        marker = self._buff_drops.get(pid, "")
-                        if marker:
-                            self._zone_buff_type[zid] = marker
+        duration = float(getattr(ctx.replay, "duration", 0.0) or 0.0)
+        # Dense early sampling (buff spawns cluster near battle start in
+        # Arms Race), then sparser through the match.
+        sample_times = [5.0, 15.0, 30.0, 60.0, 90.0, 120.0, 180.0, 240.0, 300.0,
+                        420.0, 540.0, 660.0, 780.0, 900.0, 1020.0, 1140.0]
+        if duration > 0:
+            sample_times = [t for t in sample_times if t <= duration]
 
-    def _get_zone_type(self, tracker, eid: int) -> int:
-        """Get InteractiveZone type property (0 if unknown)."""
-        props = tracker.get_entity_props(eid)
-        return int(props.get("type", 0))
+        for t in sample_times:
+            state = ctx.replay.state_at(t)
+            for zid, bz in (state.buff_zones or {}).items():
+                if zid in self._zone_buff_type:
+                    continue
+                pid = getattr(bz, "params_id", 0)
+                if pid:
+                    marker = self._buff_drops.get(int(pid), "")
+                    if marker:
+                        self._zone_buff_type[zid] = marker
+
+            # Also harvest the BattleLogic drop.data history snapshot.
+            drop = getattr(state.battle, "drop_state", None)
+            if isinstance(drop, dict):
+                data = drop.get("data", [])
+                if isinstance(data, list):
+                    for item in data:
+                        if not isinstance(item, dict):
+                            continue
+                        zid = item.get("zoneId", 0)
+                        pid = item.get("paramsId", 0)
+                        if zid and pid and zid not in self._zone_buff_type:
+                            marker = self._buff_drops.get(pid, "")
+                            if marker:
+                                self._zone_buff_type[zid] = marker
 
     def render(self, cr: cairo.Context, state: object, timestamp: float) -> None:
         config = self.ctx.config
         team_colors = config.team_colors
-        tracker = self.ctx.replay.tracker
+        # Zone position timelines + lifetimes exposed by ReplaySource.
+        zone_positions = self.ctx.replay.zone_positions
+        zone_lifetimes = self.ctx.replay.zone_lifetimes
         map_size = self.ctx.map_size
         mm = config.minimap_size
 
@@ -159,23 +180,29 @@ class CapturePointLayer(Layer):
 
         for cap in state.battle.capture_points:
             eid = cap.entity_id
-            zone_type = self._get_zone_type(tracker, eid)
+            zone_type = cap.point_type
 
             # Skip ward/ASW zones
             if zone_type in self._SKIP_TYPES:
                 continue
 
             # Skip entities that have left the game (collected buffs, expired zones).
-            # The tracker doesn't remove InteractiveZones from state after EntityLeave.
-            leave_time = tracker.get_entity_leave_time(eid)
+            lifetime = zone_lifetimes.get(eid)
+            leave_time = lifetime[1] if lifetime is not None else None
             if leave_time is not None and timestamp >= leave_time:
                 continue
 
-            # Get live position
-            pos = tracker.position_at(eid, timestamp)
-            if pos is None:
+            # Get live position from the zone_positions timeline.
+            timeline = zone_positions.get(eid)
+            if not timeline:
+                # No recoverable position — skip this zone.
                 continue
-            wx, _, wz = pos
+            wx, wz = timeline[0][1], timeline[0][2]
+            for ts, tx, tz in timeline:
+                if ts <= timestamp:
+                    wx, wz = tx, tz
+                else:
+                    break
             px, py = self.ctx.world_to_pixel(wx, wz)
 
             # cap.radius is live from iter_states (supports shrinking)

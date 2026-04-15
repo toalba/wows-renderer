@@ -10,7 +10,7 @@ from pathlib import Path
 
 import cairo
 
-from renderer.layers.base import Layer, RenderContext, FONT_FAMILY
+from renderer.layers.base import Layer, SingleRenderContext, FONT_FAMILY
 
 
 # Ribbon groups: (parent_id, [sub_ids])
@@ -90,7 +90,7 @@ class RibbonLayer(Layer):
     GAP = 3              # gap between items
     COUNT_FONT_SIZE = 10
 
-    def initialize(self, ctx: RenderContext) -> None:
+    def initialize(self, ctx: SingleRenderContext) -> None:
         super().initialize(ctx)
 
         raw = ctx.replay.recording_player_ribbons()

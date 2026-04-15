@@ -6,7 +6,7 @@ from bisect import bisect_right
 import cairo
 
 from renderer.assets import load_projectiles_db
-from renderer.layers.base import Layer, RenderContext
+from renderer.layers.base import Layer, BaseRenderContext
 
 # Ammo type colors: AP=white, HE=orange, SAP/CS=purple
 _AMMO_COLORS: dict[str, tuple[float, float, float]] = {
@@ -49,7 +49,7 @@ class ProjectileLayer(Layer):
     TORPEDO_MAX_LIFETIME = 90.0  # seconds
     TORPEDO_DEFAULT_SPEED = 60.0  # game units/s
 
-    def initialize(self, ctx: RenderContext) -> None:
+    def initialize(self, ctx: BaseRenderContext) -> None:
         super().initialize(ctx)
         replay = ctx.replay
 

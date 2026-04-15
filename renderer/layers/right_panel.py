@@ -10,7 +10,7 @@ import math
 
 import cairo
 
-from renderer.layers.base import Layer, RenderContext, FONT_FAMILY
+from renderer.layers.base import Layer, SingleRenderContext, FONT_FAMILY
 from renderer.layers.player_header import PlayerHeaderLayer
 from renderer.layers.damage_stats import DamageStatsLayer
 from renderer.layers.ribbons import RibbonLayer
@@ -50,7 +50,7 @@ class RightPanelLayer(Layer):
         if self._ribbons and self._damage:
             self._ribbons._dmg_stats_ref = self._damage
 
-    def initialize(self, ctx: RenderContext) -> None:
+    def initialize(self, ctx: SingleRenderContext) -> None:
         super().initialize(ctx)
         for sub in self._sub_layers():
             sub.initialize(ctx)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import cairo
 
-from renderer.layers.base import Layer, RenderContext, FONT_FAMILY
+from renderer.layers.base import Layer, SingleRenderContext, FONT_FAMILY
 
 # damage_param → short display label
 _CATEGORY_MAP: dict[str, str] = {
@@ -93,7 +93,7 @@ class DamageStatsLayer(Layer):
             h -= section_gap
         return h
 
-    def initialize(self, ctx: RenderContext) -> None:
+    def initialize(self, ctx: SingleRenderContext) -> None:
         super().initialize(ctx)
 
         from wows_replay_parser.events.models import DamageReceivedStatEvent

@@ -9,7 +9,7 @@ from typing import Any
 import cairo
 
 from renderer.gamedata_resolver import resolve_json_cache
-from renderer.layers.base import Layer, RenderContext
+from renderer.layers.base import Layer, BaseRenderContext
 
 log = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ class AircraftLayer(Layer):
 
     ICON_SCALE = 1.0  # relative to icon native size, at 760px reference
 
-    def initialize(self, ctx: RenderContext) -> None:
+    def initialize(self, ctx: BaseRenderContext) -> None:
         super().initialize(ctx)
 
         gamedata = ctx.config.effective_gamedata_path

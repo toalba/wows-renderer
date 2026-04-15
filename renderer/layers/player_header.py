@@ -10,7 +10,7 @@ from pathlib import Path
 import cairo
 
 from renderer.assets import get_ship_display_name, load_ship_consumables, load_ships_db
-from renderer.layers.base import Layer, RenderContext, FONT_FAMILY
+from renderer.layers.base import Layer, SingleRenderContext, FONT_FAMILY
 
 
 def _hp_color(fraction: float) -> tuple[float, float, float]:
@@ -51,7 +51,7 @@ class PlayerHeaderLayer(Layer):
     panel_top: float = 0.0
     panel_bottom: float = 0.0
 
-    def initialize(self, ctx: RenderContext) -> None:
+    def initialize(self, ctx: SingleRenderContext) -> None:
         super().initialize(ctx)
 
         ship_db = ctx.ship_db or {}

@@ -4,7 +4,13 @@ import math
 import cairo
 
 from renderer.assets import CONSUMABLE_TYPE_ID_MAP, CONSUMABLE_TYPE_TO_ICONS, CONSUMABLE_TYPE_TO_CATEGORY
-from renderer.layers.base import Layer, RenderContext, FONT_FAMILY, _font_for_text
+from renderer.layers.base import (
+    Layer,
+    BaseRenderContext,
+    SingleRenderContext,
+    FONT_FAMILY,
+    _font_for_text,
+)
 
 _SPECIES_TO_ICON: dict[str, str] = {
     "Destroyer": "destroyer",
@@ -42,7 +48,7 @@ class TeamRosterLayer(Layer):
     HP_BAR_HEIGHT = 4
     PAD_X = 8
 
-    def initialize(self, ctx: RenderContext) -> None:
+    def initialize(self, ctx: BaseRenderContext) -> None:
         super().initialize(ctx)
 
         # Load damage widget icons
@@ -84,7 +90,7 @@ class TeamRosterLayer(Layer):
         # Build per-entity effective reload + initial charges lookup
         from wows_replay_parser.consumable_calc import SPECIES_INDEX
         ship_db = ctx.ship_db or {}
-        tracker = ctx.replay.tracker
+        crew_modifiers = getattr(ctx.replay, "crew_modifiers", {}) or {}
         vgd = ctx.config.versioned_gamedata
 
         self._entity_reload: dict[int, dict[int, float]] = {}  # entity_id → {cons_id: reload_s}
@@ -97,8 +103,8 @@ class TeamRosterLayer(Layer):
 
             # Get learned skills from crewModifiersCompactParams
             learned: list[int] = []
-            if tracker and species_idx >= 0:
-                crew_props = tracker.get_entity_props(entity_id).get("crewModifiersCompactParams")
+            if species_idx >= 0:
+                crew_props = crew_modifiers.get(entity_id)
                 if crew_props:
                     ls = getattr(crew_props, "learnedSkills", None)
                     if ls and species_idx < len(ls):
@@ -148,9 +154,10 @@ class TeamRosterLayer(Layer):
         # Build per-entity consumable timeline with cooldowns.
         # For consecutive uses: cooldown_end = next activation time.
         # For last use: cooldown_end = active_end + effective reload.
+        consumable_activations = ctx.replay.consumable_activations
         self._cons_timeline: dict[int, list[tuple[float, int, float, float]]] = {}
         for entity_id in ctx.player_lookup:
-            acts = tracker.get_consumable_activations(entity_id) if tracker else []
+            acts = consumable_activations.get(entity_id, ())
             by_cons: dict[int, list[tuple[float, float]]] = {}
             for activated_at, cons_id, duration in acts:
                 by_cons.setdefault(cons_id, []).append((activated_at, duration))
@@ -472,8 +479,9 @@ class TeamRosterLayer(Layer):
         kills_w = (cr.text_extents(str(kills)).width + stat_icon_size + 4) if kills > 0 else 0
         max_name_w = stat_x - kills_w - 6 - text_x
         truncated_name = _truncate(cr, name, max_name_w, self.NAME_FONT_SIZE)
-        # Division mates get gold name highlighting
-        if entity_id in self.ctx.division_mates:
+        # Division mates get gold name highlighting (single-replay only;
+        # dual/merged contexts have no recording player → no division mates).
+        if isinstance(self.ctx, SingleRenderContext) and entity_id in self.ctx.division_mates:
             nr, ng, nb, _ = self.ctx.config.division_color
         else:
             nr, ng, nb = tr, tg, tb

@@ -1,6 +1,6 @@
 from __future__ import annotations
 import cairo
-from renderer.layers.base import Layer, RenderContext, FONT_FAMILY
+from renderer.layers.base import Layer, BaseRenderContext, FONT_FAMILY
 
 
 class HudLayer(Layer):
@@ -13,7 +13,7 @@ class HudLayer(Layer):
 
     CLAN_TAG_FONT_SIZE = 15
 
-    def initialize(self, ctx: RenderContext) -> None:
+    def initialize(self, ctx: BaseRenderContext) -> None:
         super().initialize(ctx)
         # Scoring config (populated from first frame's BattleState)
         self._win_score: int = 1000
@@ -27,7 +27,7 @@ class HudLayer(Layer):
         if game_type == "ClanBattle":
             self._resolve_clan_tags(ctx)
 
-    def _resolve_clan_tags(self, ctx: RenderContext) -> None:
+    def _resolve_clan_tags(self, ctx: BaseRenderContext) -> None:
         """Find the majority clan per team and store tag + color."""
         from collections import Counter
         for display_team in (0, 1):

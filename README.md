@@ -2,7 +2,7 @@
 
 A Cairo-based minimap replay renderer for World of Warships. Parses `.wowsreplay` files and produces MP4 timelapse videos showing ship movements, shell traces, torpedoes, capture points, health bars, consumables with charge tracking, chat, and team scores.
 
-Built for the Wargaming community bounty (KOTS referee tooling).
+Built for the Wargaming community.
 
 ---
 

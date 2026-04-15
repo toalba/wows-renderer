@@ -7,7 +7,7 @@ import math
 import cairo
 
 from renderer.assets import CONSUMABLE_TYPE_ID_MAP, CONSUMABLE_TYPE_TO_ICONS
-from renderer.layers.base import Layer, RenderContext
+from renderer.layers.base import Layer, BaseRenderContext
 
 
 # Consumable types that show detection radius circles
@@ -46,7 +46,7 @@ class ConsumableLayer(Layer):
     # entity_id → {consumableType: range_meters}
     _entity_ranges: dict[int, dict[str, float]]
 
-    def initialize(self, ctx: RenderContext) -> None:
+    def initialize(self, ctx: BaseRenderContext) -> None:
         super(ConsumableLayer, self).initialize(ctx)
         from renderer.assets import load_consumable_icons, load_ship_consumables
         gp = ctx.config.effective_gamedata_path

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import cairo
 
-from renderer.layers.base import Layer, RenderContext, FONT_FAMILY
+from renderer.layers.base import Layer, BaseRenderContext, FONT_FAMILY
 
 
 # DEATH_REASON enum from battle.xml → (label, icon_frag filename)
@@ -75,7 +75,7 @@ class KillfeedLayer(Layer):
     MAX_VISIBLE = 10
     ICON_SIZE = 16
 
-    def initialize(self, ctx: RenderContext) -> None:
+    def initialize(self, ctx: BaseRenderContext) -> None:
         super().initialize(ctx)
 
         # Load frag icons
