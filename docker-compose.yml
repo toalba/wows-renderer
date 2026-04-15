@@ -3,8 +3,6 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      ssh:
-        - default
     env_file: .env
     restart: unless-stopped
     volumes:

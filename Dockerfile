@@ -1,12 +1,11 @@
 FROM python:3.12-slim AS builder
 
-# System deps for pycairo build + git for SSH deps
+# System deps for pycairo build + git for fetching the parser over HTTPS
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     pkg-config \
     libcairo2-dev \
     git \
-    openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv
@@ -14,11 +13,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Install dependencies (SSH forwarded for private repos)
 COPY pyproject.toml ./
-RUN --mount=type=ssh \
-    mkdir -p ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts && \
-    uv venv /app/.venv && \
+RUN uv venv /app/.venv && \
     uv pip install --python /app/.venv/bin/python -e "."
 
 # --- Runtime stage ---
