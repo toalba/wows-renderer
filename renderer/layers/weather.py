@@ -16,7 +16,7 @@ class WeatherLayer(Layer):
     position and radius come from the parser's GameState.weather_zones.
     """
 
-    FILL_COLOR = (1.0, 1.0, 1.0)  # white, matching wows-toolkit
+    FILL_COLOR = (1.0, 1.0, 1.0)  # white
     FILL_ALPHA = 0.15
 
     def render(

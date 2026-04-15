@@ -408,6 +408,12 @@ The renderer automatically detects the replay's game version and builds a versio
 
 ---
 
+## Related projects
+
+- [`landaire/wows-toolkit`](https://github.com/landaire/wows-toolkit) — another community World of Warships replay tooling project (Rust).
+
+---
+
 ## License
 
 Apache 2.0 — Copyright Wargaming.net

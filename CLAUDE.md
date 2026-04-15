@@ -2,8 +2,6 @@
 
 Minimap replay renderer + Discord bot for World of Warships. Parses `.wowsreplay` files and produces mp4 videos showing ship movements, shells, torpedoes, capture points, health bars, smoke screens, consumables, aircraft, ribbons, team rosters, and team scores. Built for the Wargaming community bounty (KOTS referee tooling).
 
-**Deadline: April 20, 2026**
-
 ## Architecture
 
 ```
@@ -12,9 +10,9 @@ wows-minimap-renderer/
 │   ├── core.py                # MinimapRenderer — frame loop, layer compositing, async frame writer
 │   ├── game_state.py          # GameStateAdapter — bridges parser state to render state
 │   ├── config.py              # RenderConfig — resolution, fps, speed, team colors, versioned_gamedata
-│   ├── gameparams.py           # GameParams.data decode + blake2b pickle cache
-│   ├── gamedata_cache.py       # Per-version gamedata cache (VersionedGamedata, git archive extraction)
-│   ├── gamedata_resolver.py    # JSON cache resolver (fallback for cold-load without GameParams)
+│   ├── gameparams.py          # GameParams.data decode + blake2b pickle cache
+│   ├── gamedata_cache.py      # Per-version gamedata cache (VersionedGamedata, git archive extraction)
+│   ├── gamedata_resolver.py   # JSON cache resolver (fallback for cold-load without GameParams)
 │   ├── layers/                # Layer-based rendering (composited per frame, bottom to top)
 │   │   ├── base.py            # Layer ABC + RenderContext + text cache (draw_cached_text, draw_text_halo)
 │   │   ├── map_bg.py          # Minimap background (pre-rendered static cache: water + minimap + grid)
@@ -22,6 +20,7 @@ wows-minimap-renderer/
 │   │   ├── capture_points.py  # Cap circles + progress + team color + buff zones (Arms Race)
 │   │   ├── trails.py          # Ship movement trails (fading lines, pre-sampled)
 │   │   ├── smoke.py           # Smoke screen radius visualization
+│   │   ├── weather.py         # Weather zone overlay (InteractiveZone type==5)
 │   │   ├── projectiles.py     # Shell traces + torpedo dots (ammo-type colored)
 │   │   ├── aircraft.py        # CV squadrons + airstrike icons on minimap
 │   │   ├── ships.py           # Ship class icons (rotated by yaw) + player names + spotted glow
@@ -30,46 +29,49 @@ wows-minimap-renderer/
 │   │   ├── player_header.py   # Right panel: self-player header with ship silhouette HP bar
 │   │   ├── damage_stats.py    # Right panel: self-player damage dealt/received/spotted/potential breakdown
 │   │   ├── ribbons.py         # Right panel: recording player ribbon counters (grouped, accumulating)
-│   │   ├── killfeed.py        # Right panel: kill feed (bottom-up)
+│   │   ├── killfeed.py        # Right panel: kill feed + chat messages, bottom-up
 │   │   ├── right_panel.py     # Right panel composite: player_header + damage_stats + ribbons + killfeed
 │   │   └── hud.py             # Score bar, timer, TTW pills, 1-kill-swing indicator, match result
 │   ├── video.py               # FFmpegPipe + FrameWriter (async background thread for pipe I/O)
 │   └── assets.py              # Asset loading (minimaps, ship icons, consumable icons, ribbons, projectiles, ships.json, map_sizes, ship_consumables)
 ├── scripts/
-│   └── decode_gameparams.py   # CLI: Decode GameParams.data → JSON / split files (imports from renderer.gameparams)
+│   └── decode_gameparams.py   # CLI: Decode GameParams.data → JSON / split files
 ├── bot/                       # Discord bot (slash command /render)
-│   ├── __init__.py
 │   ├── main.py                # Bot entry point — creates Bot, loads cog, async cache population at boot
-│   ├── config.py              # BotConfig — reads .env (DISCORD_TOKEN, GAMEDATA_PATH, GAMEDATA_REPO_PATH, GAMEDATA_CACHE_DIR, etc.)
+│   ├── config.py              # BotConfig — reads .env
 │   ├── cog_render.py          # RenderCog — /render slash command, async progress polling, file upload/download
 │   └── worker.py              # render_replay() — picklable function for ProcessPoolExecutor
-├── render_quick.py            # Quick render: all layers, 20x speed, 1080px → output.mp4
+├── render_quick.py            # Single-replay render (all layers, 20x speed, 1080px → output.mp4)
+├── render_dual.py             # Dual-perspective merged render (two paired replays → single video)
 ├── profile_frames.py          # Per-frame timing profiler for render pipeline analysis
 ├── Dockerfile                 # Multi-stage build (builder + slim runtime with ffmpeg/cairo/git)
-├── .dockerignore
+├── LICENSE                    # Apache 2.0
 ├── pyproject.toml
 └── CLAUDE.md
 ```
 
-## Current Status (2026-04-07)
+## Features
 
-### Working — 16 Rendering Layers
+### Rendering Layers (16 total, composited bottom to top)
 1. **map_bg** — Water texture + minimap PNG + grid + labels (pre-rendered static cache, single paint per frame)
-2. **team_roster** — Left panel with both teams: class icon, player name, ship name, kills (incremental), damage (incremental), HP bar, consumable icons with active/cooldown timers
-3. **capture_points** — Cap circles with progress arcs, team colors, contested indicators, A-H labels
-4. **smoke** — Smoke screen radius circles from NESTED_PROPERTY puff positions, per-puff FIFO lifecycle (earlier puffs expire first)
-5. **projectiles** — Shell traces colored by ammo type (AP=white, HE=orange, SAP=pink) + torpedo dots; caliber-scaled line widths
-6. **aircraft** — CV squadrons + airstrikes + consumable planes on minimap with type-specific icons (fighter/bomber/torpedo/skip/scout/depth charge) resolved from GameParams split data via params_id
-7. **ships** — Ship class SVG icons (from minimap ship_icons/, tinted per team, cairosvg) + player names (cached text surfaces) + spotted glow + division mate gold icons
-8. **health_bars** — Per-ship HP bars (green/yellow/red) + repair party recoverable segment + ship names (cached)
-9. **consumables** — Consumable icons near ships + radar/hydro detection radius circles (team-colored: blue=ally, red=enemy)
-10. **player_header** — Right panel top: self-player header with ship silhouette HP bar, healable segment, clan tag + name
-11. **damage_stats** — Right panel: self-player damage breakdown (dealt by weapon type, spotting, potential) using DamageReceivedStatEvent
-12. **ribbons** — Right panel: recording player's ribbon counters in grouped layout (main + sub-ribbons), accumulating per frame, first-appearance order
-13. **killfeed** — Right panel: recent kills with frag icons, killer/victim names + ships, bottom-anchored growing upward
-14. **right_panel** — Composite layer: player_header + damage_stats + ribbons + killfeed with clipping
-15. **hud** — Score bar with projected winner highlight, MM:SS timer, TTW pills (diamond icon, winner highlighting), "1 KILL DECIDES" indicator (team-colored glow), match result overlay, clan battle clan tags (with clan colors)
-16. **trails** — Fading ship movement trails (pre-sampled at init, gap detection)
+2. **team_roster** — Left panel with both teams: class icon, player name, ship name, kills (incremental), damage (incremental), HP bar, consumable icons with active/cooldown timers and charge counts
+3. **capture_points** — Cap circles with progress arcs, team colors, contested indicators, A-H labels, Arms Race buff zones
+4. **weather** — White semi-transparent circles from `GameState.weather_zones` (InteractiveZone type==5)
+5. **smoke** — Smoke screen radius circles from NESTED_PROPERTY puff positions, per-puff FIFO lifecycle (earlier puffs expire first)
+6. **trails** — Fading ship movement trails (pre-sampled at init, gap detection)
+7. **projectiles** — Shell traces colored by ammo type (AP=white, HE=orange, SAP=pink) + torpedo dots; caliber-scaled line widths
+8. **aircraft** — CV squadrons + airstrikes + consumable planes on minimap with type-specific icons (fighter/bomber/torpedo/skip/scout/depth charge) resolved from GameParams split data via params_id
+9. **ships** — Ship class SVG icons (from minimap ship_icons/, tinted per team, cairosvg) + player names (cached text surfaces) + spotted glow + division mate gold icons
+10. **health_bars** — Per-ship HP bars (green/yellow/red) + repair party recoverable segment + ship names (cached)
+11. **consumables** — Consumable icons near ships + radar/hydro/hydrophone detection radius circles (team-colored: blue=ally, red=enemy)
+12. **player_header** — Right panel top: self-player header with ship silhouette HP bar, healable segment, clan tag + name
+13. **damage_stats** — Right panel: self-player damage breakdown (dealt by weapon type, spotting, potential) using DamageReceivedStatEvent
+14. **ribbons** — Right panel: recording player's ribbon counters in grouped layout (main + sub-ribbons), accumulating per frame, first-appearance order
+15. **killfeed** — Right panel: recent kills with frag icons, killer/victim names + ships, interleaved with chat messages (team chat prefixed `[T]`, pre-battle `[P]`), bottom-anchored growing upward
+16. **right_panel** — Composite layer: player_header + damage_stats + ribbons + killfeed with clipping
+17. **hud** — Score bar with projected winner highlight, MM:SS timer, TTW pills (diamond icon, winner highlighting), "1 KILL DECIDES" indicator (team-colored glow), match result overlay, clan battle clan tags (with clan colors)
+
+Note: layer 4 (`weather`) and layer 6 (`trails`) are omitted in `render_quick.py` — see the actual layer list in that script for the canonical ordering.
 
 ### Performance
 - **~57 fps** rendering at 1920x1104 (1080px minimap + 420px panels)
@@ -90,7 +92,7 @@ wows-minimap-renderer/
 - **Game type in Discord message** — shows RandomBattle, ClanBattle, CooperativeBattle etc.
 - **Per-phase timing instrumentation** — resolve/parse/setup/render/encode/upload breakdown + per-layer init timings logged after each render
 - Self player position tracking via PLAYER_ORIENTATION (0x2C) packets
-- Self-team detection and perspective swap (Trap 5)
+- Self-team detection and perspective swap (see Trap 5 below)
 - **Vision-based enemy visibility** — enemies appear when first spotted via MinimapVisionEvent, not when first position packet arrives (fixes multi-second gaps)
 - Undetected enemies shown at 40% alpha (detection from visibility_flags)
 - Dead ships shown with sunk icon variant
@@ -112,8 +114,8 @@ dependencies = [
     "pycairo>=1.26",             # Cairo vector graphics (2D rendering)
     "discord.py>=2.3",           # Discord bot
     "python-dotenv>=1.0",        # .env file loading for bot config
-    "click>=8.0",                # CLI (future)
-    "rich>=13.0",                # CLI output (future)
+    "click>=8.0",                # CLI dependencies (reserved)
+    "rich>=13.0",                # CLI dependencies (reserved)
 ]
 ```
 
@@ -238,7 +240,7 @@ output.mp4
 
 ## Dual Perspective Rendering
 
-Entry point: `python render_dual.py a.wowsreplay b.wowsreplay output.mp4`. Both replays must come from the same match (parser's `merge_replays` validates `arenaUniqueId` and map_name). `DualMinimapRenderer` consumes the `MergedReplay` identically to a `ParsedReplay` via the `ReplaySource` protocol. Drops self-centric layers (`player_header`, `damage_stats`, `ribbons`, `killfeed`, `right_panel`). Neutral observer mode: no Trap-5 perspective swap — team 0 = green/left, team 1 = red/right regardless of either recorder's side. `division_mates` is empty (no recording player in merged view).
+Entry point: `python render_dual.py a.wowsreplay b.wowsreplay output.mp4`. Both replays must come from the same match (parser's `merge_replays` validates `arenaUniqueId` and map_name). `DualMinimapRenderer` consumes the `MergedReplay` identically to a `ParsedReplay` via the `ReplaySource` protocol. Drops self-centric layers (`player_header`, `damage_stats`, `ribbons`, `killfeed`, `right_panel`). Neutral observer mode: no Trap-5 perspective swap — team 0 = green/left, team 1 = red/right regardless of either recorder's side. `division_mates` is empty (no recording player in merged view). Validated end-to-end on real paired replays.
 
 ## Layer System
 
@@ -249,6 +251,7 @@ renderer = MinimapRenderer(config)
 renderer.add_layer(MapBackgroundLayer())       # Bottom: water + minimap + grid (cached)
 renderer.add_layer(TeamRosterLayer())          # Left panel: team rosters
 renderer.add_layer(CapturePointLayer())
+renderer.add_layer(WeatherLayer())
 renderer.add_layer(SmokeLayer())
 renderer.add_layer(ProjectileLayer())          # Shell traces + torpedoes
 renderer.add_layer(AircraftLayer())            # CV squadrons + airstrikes
@@ -288,10 +291,10 @@ Shared context passed to all layers via `initialize()`:
 | `replay` | `ParsedReplay` | The parsed replay |
 | `map_size` | `float` | space_size from map_sizes.json |
 | `player_lookup` | `dict[int, PlayerInfo]` | entity_id -> player info |
-| `ship_db` | `dict[int, dict] | None` | ship_id -> {name, species, nation, level} |
-| `ship_icons` | `dict[str, dict] | None` | species -> {ally/enemy/white/division/sunk: cairo.ImageSurface} |
+| `ship_db` | `dict[int, dict] \| None` | ship_id -> {name, species, nation, level} |
+| `ship_icons` | `dict[str, dict] \| None` | species -> {ally/enemy/white/division/sunk: cairo.ImageSurface} |
 | `division_mates` | `set[int]` | entity_ids of recording player's division mates (empty for clan battles) |
-| `first_seen` | `dict[int, float] | None` | entity_id -> first position timestamp |
+| `first_seen` | `dict[int, float] \| None` | entity_id -> first position timestamp |
 | `scale` | `float` (property) | Scale factor relative to 760px reference |
 
 Key methods:
@@ -299,40 +302,293 @@ Key methods:
 - `is_visible(entity_id, timestamp)` — whether entity has been seen yet
 - `raw_to_display_team(raw_team_id)` -> `0` (ally) or `1` (enemy) — handles perspective swap
 
+## Renderer Traps (invariants)
+
+Pitfalls that bite the minimap renderer. Each of these has been hit in development and is now load-bearing — change with care.
+
+### Trap 1: Coordinate Mapping — space_size, not game meters
+
+Replay positions are in BigWorld space units. The formula:
+```python
+scaling = 760.0 / space_size
+pixel_x = round(pos_x * scaling + 380)
+pixel_y = round(-pos_z * scaling + 380)  # Z axis inverted
+```
+
+`space_size` per map comes from `manifest.json` / `space.settings` (via `map_sizes.json`). Typical values: 800, 1000, 1200, 1400, 1600. **Do not confuse with in-game meters (24000, 30000, 42000, 48000).** Using game meters as map size clusters every ship in the middle of the map.
+
+### Trap 2: NormalizedPos → World → Pixel (three steps)
+
+MinimapVisionInfo positions must first be converted to world coordinates, then run through the normal `world_to_pixel()`:
+```python
+# Step 1: Stored → raw 11-bit
+raw_x = (stored_x + 1.5) * 512.0
+raw_y = (stored_y + 1.5) * 512.0
+# Step 2: Raw → world
+world_x = raw_x / 2047.0 * 5000.0 - 2500.0
+world_z = raw_y / 2047.0 * 5000.0 - 2500.0
+# Step 3: World → pixel (same formula as position packets)
+```
+Without this path, MinimapVisionInfo ships render at completely wrong positions.
+
+### Trap 3: Radius conversion — cap vs consumable
+
+**Cap point radius and smoke radius are in space units:**
+```python
+px_radius = radius / space_size * minimap_size        # No / 30!
+```
+**Weapon ranges and consumable radii are in meters:**
+```python
+px_radius = radius_meters / 30.0 / space_size * minimap_size
+px_radius = radius_km * 1000.0 / 30.0 / space_size * minimap_size
+```
+Mixing them up is a factor-30 error — cap circles that fill half the screen, or become invisibly small.
+
+### Trap 4: Yaw/heading conversion
+
+Minimap heading (from `updateMinimapVisionInfo`) is in degrees, compass format (0 = north, clockwise positive). For screen rendering:
+```python
+screen_yaw = math.pi / 2 - math.radians(heading_degrees)
+```
+World yaw (from position packets) uses a different convention. **Prefer minimap heading** for ship icon rotation when available — it is more accurate.
+
+### Trap 5: Self-team ID and perspective swap
+
+The replay file is from one perspective. `team_id` is 0 or 1, but which team the recorder belongs to varies per replay.
+1. Find the own player via `relation == Self` (or `relation == 0`)
+2. Read that player's `team_id` from the Vehicle entity
+3. If `self_team_id == 1`: swap everything (score bar side, cap colors, ship colors, team advantage)
+
+Without the swap, colors are wrong in ~50% of replays. `RenderContext.raw_to_display_team()` encapsulates this. In dual-perspective rendering, the swap is disabled (neutral observer mode).
+
+### Trap 6: Detected vs undetected ships
+
+| Status | Rendering |
+|--------|-----------|
+| Detected (minimap.visible = true) | Full opacity, name, HP bar |
+| Undetected (minimap.visible = false) | 40% opacity, no name, no HP |
+| Dead | Sunk icon at last known position |
+
+Undetected ships are shown at their last-known minimap position, not hidden. A KOTS referee needs to see where a ship was last spotted.
+
+### Trap 7: Dead ship positions
+
+Dead ships need their last position:
+- `dead.position` — world position at time of death (preferred)
+- `dead.minimap_position` — minimap position as fallback
+- Last known heading for icon rotation
+
+Dead ships vanishing instead of showing a sunk icon loses critical referee information.
+
+### Trap 8: Shell tracer animation
+
+Shells render as animated tracers, not static lines. Per frame:
+```python
+elapsed = current_time - fired_at
+flight_duration = distance(origin, target) / speed
+frac = elapsed / flight_duration
+if 0 <= frac <= 1:
+    head = lerp(origin, target, frac)
+    tail = lerp(origin, target, max(0, frac - 0.12))  # 12% trail length
+    draw_line(tail, head, team_color)
+```
+Without flight-time interpolation you either see nothing (shells exist for a single frame) or static lines that linger the entire match.
+
+### Trap 9: Torpedo position interpolation
+
+Torpedoes have no target point. Position is computed from origin + direction:
+
+**Straight torps:**
+```python
+pos = origin + direction * elapsed
+```
+**S-turn torps (`maneuverDump != None`):**
+```python
+initial_yaw = atan2(dir.x, dir.z)
+speed = magnitude(direction)
+w = sign(target_yaw - initial_yaw) * yaw_speed
+turn_duration = abs(target_yaw - initial_yaw) / yaw_speed
+if elapsed < turn_duration:
+    # Arc integral
+    ratio = speed / w
+    yaw_t = initial_yaw + w * elapsed
+    x = origin.x + ratio * (-cos(yaw_t) + cos(initial_yaw))
+    z = origin.z + ratio * (sin(yaw_t) - sin(initial_yaw))
+else:
+    # Straight line from end of arc
+    ...
+```
+**Boundary check:** skip torps outside the map (`|x| > space_size/2` or `|z| > space_size/2`).
+
+### Trap 10: Timer — BattleStage is inverted
+
+```
+BattleStage "Battle"  (raw 1) = PRE-BATTLE COUNTDOWN → show countdown
+BattleStage "Waiting" (raw 0) = BATTLE ACTIVE        → show elapsed/remaining
+```
+For elapsed time: `elapsed = clock - battle_start_clock`. `battle_start_clock` is supplied by the parser.
+
+### Trap 11: Ship colors
+
+| Relation | Color |
+|----------|-------|
+| Self | White `(255, 255, 255)` |
+| Division mate | Gold `(255, 215, 0)` |
+| Ally | Green `(76, 232, 170)` |
+| Enemy | Red `(254, 77, 42)` |
+
+Division mates are **not** highlighted in clan battles (the whole team is effectively one division).
+
+### Trap 12: HP bar color thresholds
+
+```python
+if fraction > 0.66: color = (0, 255, 0)      # Green
+elif fraction > 0.33: color = (255, 255, 0)  # Yellow
+else: color = (255, 0, 0)                    # Red
+```
+Background: `(50, 50, 50)` at 70% alpha.
+
+### Trap 13: Prefer minimap position for rendering
+
+MinimapVisionInfo position is the authoritative source for detected ships on the minimap — not the world position from position packets. World position can be stale (last position update); MinimapVisionInfo is sent by the server specifically for the minimap.
+
+For **trails**, use world position when available, MinimapVisionInfo as fallback.
+
+## Design Guidelines
+
+Visual rules for the renderer. Optimized for readability in a fixed-resolution timelapse (760px minimap reference, 20 FPS, 10–20x speed).
+
+### Typography
+
+Currently the renderer uses the system `sans-serif` face via Cairo's toy text API. Custom fonts (Barlow for names, JetBrains Mono for digits) would require FreeType bindings — noted as a possible future improvement, not implemented.
+
+Every text element must have a **dark stroke halo**. Single most important readability rule. Implementation pattern:
+```python
+# 1. Dark stroke outline
+cr.set_source_rgba(0, 0, 0, 0.9)
+cr.set_line_width(3.0)
+cr.set_line_join(cairo.LINE_JOIN_ROUND)
+cr.move_to(tx, ty); cr.text_path(text); cr.stroke()
+# 2. Fill on top
+cr.set_source_rgba(r, g, b, alpha)
+cr.move_to(tx, ty); cr.show_text(text)
+```
+Use `draw_text_halo` / `draw_cached_text` on `Layer` rather than rolling your own.
+
+### Color Palette
+
+| Token | Hex | Purpose |
+|---|---|---|
+| `sea-bg` | `#0D1520` | Water fill |
+| `label-primary` | `#E8E4D9` | Player names (off-white) |
+| `label-secondary` | `#9BA4AB` | Ship names (neutral — avoid dim team-colored text on dark backgrounds) |
+| `friendly` | `#5DE682` | Ally team |
+| `enemy` | `#FF6B6B` | Enemy team |
+| `self` | `#FFFFFF` | Recording player |
+| `contested` | `#FFC83C` | Contested cap (amber) |
+
+The chosen greens and reds differ in luminance, so they remain distinguishable under deuteranopia.
+
+**Ship name rule:** ship names use the neutral `label-secondary`, not team color. Team identity is already carried by the ship icon and player name color.
+
+### Visual Hierarchy
+
+Bottom-to-top: background → objectives (cap zones) → trails → ships and labels → HUD. No lower-layer element should ever obscure a higher one — the text halo enforces this.
+
+### Capture Zones
+
+Static zone (held):
+- Fill: team color ~8% opacity
+- Ring: team color ~40% opacity, 2.5px
+- Label: team color, bold ~18px
+
+Contested zone adds:
+- Progress arc: invader color, 4px stroke
+- Inner wedge: invader color ~12% opacity
+- Outer ring: dashed amber (`#FFC83C`) ~25% opacity
+
+Neutral zone: white fill ~4%, ring ~18%, label ~70%.
+
+### HUD
+
+Score bar background should fade (linear gradient from `rgba(0,0,0,0.7)` at top → transparent, ~38px tall). Score numbers use team colors, 18px; timer uses white at 60% opacity, 16px.
+
+### Not applicable (don't bother)
+
+These belong to interactive minimaps and add no value to a fixed-resolution timelapse video:
+- Label collision avoidance / leader lines
+- Zoom-dependent detail
+- Label fade-in/out animations (at 20x speed, too fast to notice)
+- Particle effects, bloom, glow
+
+## Damage Breakdown
+
+### What's implemented
+
+**Self-player breakdown** via `DamageReceivedStatEvent` (from `receiveDamageStat` packets):
+- `damage_stats.py` renders weapon-category breakdown: AP, HE, SAP, secondary, torpedo, fire, flood, rockets, bombs, depth charges, ram
+- Sections: damage dealt (ENEMY), spotting damage (SPOT), potential damage (AGRO)
+- 85 weapon categories available from the parser
+
+**All-player total damage** via `DamageEvent` (from `receiveDamagesOnShip` packets):
+- `team_roster.py` shows aggregate damage per player (no type breakdown)
+
+### Limitations
+
+Per-player typed damage breakdown for all players is **not possible** — the game protocol only sends `receiveDamageStat` (which includes ammo_id) for the recording player. Other players only get `receiveDamagesOnShip` with total damage, no type info. This is a game protocol constraint, not a parser limitation.
+
 ## WG Bounty Requirements Mapping
 
-### Core (required)
+### Core
 
-| Requirement | Layer/Component | Status |
+| Requirement | Component | Status |
 |---|---|---|
-| Parse replay -> video | `core.py` + `video.py` | DONE |
-| Both teams + ship names + HP bars | `ships.py` + `health_bars.py` + `team_roster.py` | DONE |
-| Shells and torpedoes | `projectiles.py` | DONE |
-| Discord bot + user interaction | `bot/` | DONE |
-| Capture points + status + progress | `capture_points.py` | DONE |
-| Total team points | `hud.py` | DONE |
-| Maintained for 1 year | Automated gamedata pipeline + per-version cache | DONE (git archive extraction, no checkout) |
-| Apache 2.0, WG copyright | `LICENSE` | TODO |
+| Parse replay → video | `core.py` + `video.py` | Done |
+| Both teams + ship names + HP bars | `ships.py` + `health_bars.py` + `team_roster.py` | Done |
+| Shells and torpedoes | `projectiles.py` | Done |
+| Discord bot + user interaction | `bot/` | Done |
+| Capture points + status + progress | `capture_points.py` | Done |
+| Total team points | `hud.py` | Done |
+| Maintained for 1 year | Per-version gamedata cache | Done (git archive extraction, no checkout) |
+| Apache 2.0, WG copyright | `LICENSE` | Done |
 
-### Nice-to-have (P2)
+### Nice-to-have
 
-| Feature | Layer/Component | Status |
+| Feature | Component | Status |
 |---|---|---|
-| Ribbons | `ribbons.py` | DONE |
-| Team roster side panels | `team_roster.py` | DONE |
-| Aircraft (CV squadrons + airstrikes) | `aircraft.py` | DONE (type-specific icons from GameParams) |
-| TTW + projected winner | `hud.py` | DONE |
-| 1 kill swing indicator | `hud.py` | DONE |
-| Kill feed | `killfeed.py` | DONE |
-| Repair Party recoverable HP | `health_bars.py` | DONE |
-| Self-player damage breakdown | `damage_stats.py` | DONE (via DamageReceivedStatEvent) |
-| Self-player header + silhouette HP | `player_header.py` | DONE |
-| Division mate highlighting | `ships.py` + `team_roster.py` + `base.py` | DONE (gold icons on minimap + roster, disabled in clan battles) |
-| Clan battle clan tags | `hud.py` | DONE (below score bar, clan colors, majority ≥4 players) |
-| Game type in Discord message | `cog_render.py` + `worker.py` | DONE |
-| Per-phase timing instrumentation | `worker.py` + `core.py` + `cog_render.py` | DONE (parse/render/encode/upload) |
-| Per-player damage breakdown (all players) | — | NOT POSSIBLE (game protocol only sends typed damage for self) |
-| Dual perspective combined | `merge.py` in parser | NOT STARTED |
+| Ribbons | `ribbons.py` | Done |
+| Team roster side panels | `team_roster.py` | Done |
+| Aircraft (CV squadrons + airstrikes) | `aircraft.py` | Done (type-specific icons from GameParams) |
+| TTW + projected winner | `hud.py` | Done |
+| 1 kill swing indicator | `hud.py` | Done |
+| Kill feed + chat messages | `killfeed.py` | Done |
+| Repair Party recoverable HP | `health_bars.py` | Done |
+| Self-player damage breakdown | `damage_stats.py` | Done (via DamageReceivedStatEvent) |
+| Self-player header + silhouette HP | `player_header.py` | Done |
+| Division mate highlighting | `ships.py` + `team_roster.py` + `base.py` | Done |
+| Clan battle clan tags | `hud.py` | Done |
+| Game type in Discord message | `cog_render.py` + `worker.py` | Done |
+| Per-phase timing instrumentation | `worker.py` + `core.py` + `cog_render.py` | Done |
+| Per-version gamedata awareness | `gamedata_cache.py` | Done |
+| Weather zone overlay | `weather.py` | Done |
+| Dual perspective merged render | `render_dual.py` + `merge.py` in parser | Done |
+| Per-player typed damage (all players) | — | Not possible (game protocol limitation) |
+
+## Feature Ideas
+
+Unscheduled ideas — kept as a reference for future work.
+
+- **Buildings layer** — 8 building types (Airbase, AA, Artillery, Generator, Radar, Station, Supply, Tower) with relation-state icons. Parser already tracks `BuildingState` in `state.buildings`. Needs a new `BuildingLayer` + icon loading from `gui/game_map_markers/{type}_{relation}.png`.
+- **Detection radius per-type coloring** — Per-type colors are defined in `consumables.py` (lines 14–22) but currently overridden by team colors at lines 162–165. Desired: use per-type colors (radar=red, hydro=teal, hydrophone=blue, sub surveillance=purple) instead of blanket team colors.
+- **Team advantage scoring** — Replace "1 KILL DECIDES" with a 3-factor model: Score Projection (0–10: score gap + TTW + projected final), Fleet Power (0–10: class-weighted HP with DD=1.5, SS=1.3, CV=1.2, CL/BB=1.0), Strategic Threat (0–5: DD/SS survival + class diversity + CV advantage). Levels: Even (<1), Weak (≥1), Moderate (≥3), Strong (≥6), Absolute (≥10). Pure math, no new data deps — needs ship class + HP + cap income from existing state.
+- **Per-turret direction layer** — Parser accumulates `ShipState.turret_yaws` (gun_id → yaw) from syncGun. Needs a dedicated `TurretLayer` that draws individual gun direction lines per turret, separate from the aim heading line in `ships.py`. Parser data is ready; renderer layer not started.
+- **Frame dump / thumbnail** — Skip FFmpeg, write a single Cairo surface to PNG at a given timestamp. Useful for Discord embed previews. Very low effort.
+- **Trail coloring** (rainbow / speed-based) — minor visual upgrade.
+- **Pre-battle countdown timer** — trivial, low value.
+- **Chat overlay layer** — parser has `ChatEvent`; already interleaved into killfeed, a dedicated on-map overlay is a different direction.
+- **Armament color indicator** — ammo type icon tinting; needs `SetAmmoForWeapon` in the state tracker.
+- **Custom fonts (Barlow + JetBrains Mono)** — requires FreeType bindings in Cairo.
+- **Contested cap pulse animation** — outer ring radius oscillates ±8% over ~2.5s; ring opacity breathes between 15% and 35%.
 
 ## Discord Bot
 
@@ -357,9 +613,9 @@ Key methods:
 
 ### Slash Command Flow
 1. `/render` + `.wowsreplay` attachment
-2. Validate extension + file size -> defer interaction
-3. Download to temp dir -> dispatch to `ProcessPoolExecutor`
-4. Poll progress queue -> edit Discord message with `Rendering... X%`
+2. Validate extension + file size → defer interaction
+3. Download to temp dir → dispatch to `ProcessPoolExecutor`
+4. Poll progress queue → edit Discord message with `Rendering... X%`
 5. Send mp4 with game type, match duration, render time, file size
 6. Log per-phase timing breakdown (parse/render/encode/upload)
 7. Cleanup temp dir
@@ -396,6 +652,9 @@ uv sync
 # Quick render (auto-resolves gamedata version from replay, caches on first run)
 python render_quick.py battle.wowsreplay output.mp4
 
+# Dual-perspective merged render (two paired replays from same match)
+python render_dual.py a.wowsreplay b.wowsreplay output.mp4
+
 # Profile render performance (per-layer timing breakdown)
 python profile_frames.py battle.wowsreplay /tmp/profile.mp4
 
@@ -408,52 +667,6 @@ eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519
 DOCKER_BUILDKIT=1 docker compose build --ssh default
 docker compose up -d
 ```
-
-## Remaining Work
-
-### Before Submission (April 20)
-1. ~~Discord bot (`bot/`) — slash commands, file upload, render worker~~ DONE
-2. CLI implementation (`renderer/cli.py`)
-3. LICENSE file (Apache 2.0, WG copyright)
-4. ~~Fix aircraft airstrike team_id~~ DONE (parser commit e335703)
-5. ~~Per-player damage type breakdown~~ DONE for self player; NOT POSSIBLE for other players (game protocol limitation)
-6. ~~Visual polish + edge case handling~~ DONE (visibility, smoke lifecycle, aircraft icons, SVG ship icons)
-
-### Nice-to-have (P2)
-7. Dual perspective merge — **IN PROGRESS** (core working, needs paired-replay validation). See "Dual Perspective Rendering" below.
-8. ~~Version-awareness for gamedata~~ DONE (per-version cache with GameParams pickle, git archive extraction, concurrent-worker safe)
-
-### Toolkit-inspired features (P2)
-Compared against wows-toolkit 0.1.65 renderer (2026-04-07). Items where toolkit is ahead.
-
-9. **Buildings layer** — 8 building types (Airbase, AA, Artillery, Generator, Radar, Station, Supply, Tower) with relation-state icons. Parser already tracks `BuildingState` in `state.buildings`. Need new `BuildingLayer` + icon loading from `gui/game_map_markers/{type}_{relation}.png`.
-10. **Detection radius per-type coloring** — Per-type colors are defined in `consumables.py` (lines 14-22) but overridden by team colors at lines 162-165. Fix: use the defined per-type colors (radar=red, hydro=teal, hydrophone=blue, sub surveillance=purple) instead of blanket team colors.
-11. **Team advantage scoring** — Replace "1 KILL DECIDES" with 3-factor model: Score Projection (0-10: score gap + TTW + projected final), Fleet Power (0-10: class-weighted HP with DD=1.5, SS=1.3, CV=1.2, CL/BB=1.0), Strategic Threat (0-5: DD/SS survival + class diversity + CV advantage). Levels: Even (<1), Weak (≥1), Moderate (≥3), Strong (≥6), Absolute (≥10). Full algorithm in `wows-toolkit/docs/TEAM_ADVANTAGE_SCORING.md`. Pure math, no new data deps — needs ship class + HP + cap income from existing state.
-12. ~~**Weather zone overlay**~~ DONE — `weather.py` layer draws white semi-transparent circles from `GameState.weather_zones`. Parser tracks InteractiveZone type==5 entities with position + radius.
-13. **Per-turret direction layer** — Parser accumulates `ShipState.turret_yaws` (gun_id → yaw) from syncGun. Needs a dedicated `TurretLayer` that draws individual gun direction lines per turret, separate from the aim heading line in `ships.py`. WIP — parser data ready, renderer layer not started.
-14. **Frame dump / thumbnail** — Skip FFmpeg, write single Cairo surface to PNG for a given timestamp. Useful for Discord embed previews. Very low effort.
-
-### Future backlog (P3)
-Low priority, noted for reference. Not worth building now.
-- Trail coloring (rainbow / speed-based) — toolkit has it, minor visual upgrade
-- Pre-battle countdown timer — trivial, low value
-- Chat overlay layer — parser has ChatEvent, just needs a layer
-- Armament color indicator — ammo type icon tinting, needs SetAmmoForWeapon in state tracker
-
-## Damage Breakdown
-
-### What's implemented
-
-**Self-player breakdown** via `DamageReceivedStatEvent` (from `receiveDamageStat` packets):
-- `damage_stats.py` renders weapon-category breakdown: AP, HE, SAP, secondary, torpedo, fire, flood, rockets, bombs, depth charges, ram
-- Sections: damage dealt (ENEMY), spotting damage (SPOT), potential damage (AGRO)
-- 85 weapon categories available from the parser
-
-**All-player total damage** via `DamageEvent` (from `receiveDamagesOnShip` packets):
-- `team_roster.py` shows aggregate damage per player (no type breakdown)
-
-### Limitation
-Per-player typed damage breakdown for all players is **not possible** — the game protocol only sends `receiveDamageStat` (which includes ammo_id) for the recording player. Other players only get `receiveDamagesOnShip` with total damage, no type info. This is a game protocol constraint, not a parser limitation.
 
 ## License
 
