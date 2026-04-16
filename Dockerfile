@@ -1,4 +1,4 @@
-FROM python:3.12-slim AS builder
+FROM python:3.14-slim AS builder
 
 # System deps for pycairo build + git for fetching the parser over HTTPS
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -18,7 +18,7 @@ RUN uv venv /app/.venv && \
     uv pip install --python /app/.venv/bin/python -e "."
 
 # --- Runtime stage ---
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
