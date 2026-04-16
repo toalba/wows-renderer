@@ -415,6 +415,15 @@ The renderer automatically detects the replay's game version and builds a versio
 
 ---
 
+## Contributing
+
+Bug reports, patches, and layer ideas welcome. See
+[`.github/CONTRIBUTING.md`](.github/CONTRIBUTING.md) for dev setup and
+[`.github/CODE_OF_CONDUCT.md`](.github/CODE_OF_CONDUCT.md) for expectations.
+Security issues: see [`SECURITY.md`](SECURITY.md).
+
+---
+
 ## Related projects
 
 - [`landaire/wows-toolkit`](https://github.com/landaire/wows-toolkit) — another community World of Warships replay tooling project (Rust).

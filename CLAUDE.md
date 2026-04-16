@@ -672,10 +672,38 @@ python -m bot.main
 # or: wows-bot
 
 # Docker (server — see docker-compose.yml for volume mounts)
-eval "$(ssh-agent -s)" && ssh-add ~/.ssh/id_ed25519
-DOCKER_BUILDKIT=1 docker compose build --ssh default
+DOCKER_BUILDKIT=1 docker compose build
 docker compose up -d
 ```
+
+## Operations
+
+### Liveness
+The bot touches `/tmp/bot_heartbeat` from an asyncio background task every 30s
+(see `bot/main.py::_heartbeat_bg`). The Docker `HEALTHCHECK` considers the
+container unhealthy if the file is stale for more than 120s, which catches
+event-loop hangs and silent task death — not just "python is running".
+
+Check from the host:
+```bash
+docker compose ps           # STATUS column shows (healthy) / (unhealthy)
+docker inspect --format '{{.State.Health.Status}}' wows-renderer-bot-1
+```
+
+### Resource limits
+`docker-compose.yml` caps the bot at **2 GB RAM / 2 CPU cores**. Cairo renders
+at 1080p can briefly spike above 1 GB on complex matches — adjust via a
+compose override if your VPS has more headroom. Reservation floor is 512 MB
+so the scheduler won't starve the bot under load.
+
+### Log rotation
+JSON-file driver with rolling window: **10 MB × 5 files = ~50 MB ceiling**.
+Prevents disk fill from render-heavy sessions. Logs persist across restarts
+until rotated out.
+
+### Restart policy
+`restart: unless-stopped` — the bot auto-restarts on crash or host reboot, but
+stays down if you `docker compose stop` it explicitly.
 
 ## License
 

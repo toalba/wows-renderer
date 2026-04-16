@@ -10,5 +10,40 @@ services:
       - ./.git/modules/wows-gamedata:/app/.git/modules/wows-gamedata:ro
       - gamedata-cache:/root/.cache/wows-gamedata
 
+    # Liveness — overrides the image HEALTHCHECK with the same semantics so
+    # the check is visible in compose config even when the image cache is
+    # primed separately.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os,time,sys; sys.exit(0 if os.path.exists('/tmp/bot_heartbeat') and time.time()-os.path.getmtime('/tmp/bot_heartbeat')<120 else 1)"
+      interval: 60s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+
+    # Resource limits — cairo renders can spike RAM on high-res output.
+    # `deploy.resources` works in Compose v2.20+ (non-swarm); mem_limit/cpus
+    # are the legacy equivalents kept for broader compatibility.
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+        reservations:
+          memory: 512M
+    mem_limit: 2g
+    cpus: 2.0
+
+    # Rolling logs: ~50 MB ceiling (10 MB × 5 files). Prevents disk fill from
+    # render-heavy days.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
 volumes:
   gamedata-cache:

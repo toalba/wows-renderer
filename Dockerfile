@@ -49,4 +49,9 @@ COPY render_quick.py ./
 COPY pyproject.toml ./
 RUN pip install --no-deps -e .
 
+# Liveness: the bot touches /tmp/bot_heartbeat every 30s from its event loop.
+# A stale file (>120s) means the loop is stuck or the task died.
+HEALTHCHECK --interval=60s --timeout=5s --start-period=60s --retries=3 \
+    CMD python -c "import os,time,sys; sys.exit(0 if os.path.exists('/tmp/bot_heartbeat') and time.time()-os.path.getmtime('/tmp/bot_heartbeat')<120 else 1)"
+
 ENTRYPOINT ["python", "-m", "bot.main"]

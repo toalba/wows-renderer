@@ -1,0 +1,72 @@
+name: Bug report
+description: The renderer produces incorrect output or crashes on a specific input.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Command line or Python snippet that triggers the bug.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual behaviour
+
+  - type: input
+    id: renderer-version
+    attributes:
+      label: Renderer version / commit
+    validations:
+      required: true
+
+  - type: input
+    id: parser-version
+    attributes:
+      label: Parser version / commit
+      description: Run `uv pip show wows-replay-parser` or check `uv.lock`.
+
+  - type: input
+    id: game-version
+    attributes:
+      label: WoWs game version
+      description: From the replay JSON header, e.g. "15,3,0,12267945".
+    validations:
+      required: true
+
+  - type: input
+    id: deploy-mode
+    attributes:
+      label: Deployment
+      description: Local dev, Docker, Discord bot, etc.
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / stack trace
+      render: shell
+
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: Screenshot / rendered frame
+      description: If the bug is visual, attach a frame showing the issue.
+
+  - type: markdown
+    attributes:
+      value: |
+        **About replay files:** please do NOT attach private-match replays
+        with player information. Describe the scenario in words or use a
+        sanitized version.

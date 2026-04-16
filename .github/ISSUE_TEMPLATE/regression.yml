@@ -1,0 +1,47 @@
+name: Regression
+description: Something that used to render correctly now doesn't. Often an
+  upstream parser break.
+title: "[Regression] "
+labels: ["regression"]
+body:
+  - type: input
+    id: last-working
+    attributes:
+      label: Last known-working renderer version / commit
+    validations:
+      required: true
+
+  - type: input
+    id: first-broken
+    attributes:
+      label: First broken commit / CI run URL
+      description: Canary-workflow run link is ideal.
+    validations:
+      required: true
+
+  - type: input
+    id: parser-version
+    attributes:
+      label: Parser version / commit
+      description: Especially relevant if the break coincides with a parser update.
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Replay + render command that fails now but used to work.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: visual-diff
+    attributes:
+      label: Before / after
+      description: Frame from a working version vs the current broken output.
+
+  - type: textarea
+    id: suspected-cause
+    attributes:
+      label: Suspected cause
+      description: Parser change? Layer refactor? Cairo version? Docker image?

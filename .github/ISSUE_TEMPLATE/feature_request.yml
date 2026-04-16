@@ -1,0 +1,32 @@
+name: Feature request
+description: Propose a new layer, rendering capability, or bot command.
+title: "[Feat] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: What are you trying to show on the rendered minimap that isn't already there?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: New layer, new config flag, new bot slash command, etc.
+
+  - type: textarea
+    id: data-source
+    attributes:
+      label: Data availability
+      description: Is the required data already in `GameState` / `ReplaySource`,
+        or does the parser need extending first?
+
+  - type: textarea
+    id: mockup
+    attributes:
+      label: Mockup / reference
+      description: Sketch, screenshot from another tool, or a description of
+        the intended visual result.

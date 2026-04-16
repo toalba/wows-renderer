@@ -27,6 +27,9 @@ def main() -> None:
         # Populate gamedata caches in the background so the bot starts immediately
         asyncio.create_task(_populate_caches_bg(config))
 
+        # Liveness heartbeat for Docker HEALTHCHECK (touch /tmp/bot_heartbeat every 30s)
+        asyncio.create_task(_heartbeat_bg())
+
     bot.setup_hook = setup_hook
 
     @bot.event
@@ -51,6 +54,25 @@ async def _populate_caches_bg(config: BotConfig) -> None:
             log.info("All gamedata caches already up to date")
     except Exception:
         log.exception("Background cache population failed")
+
+
+_HEARTBEAT_PATH = "/tmp/bot_heartbeat"
+
+
+async def _heartbeat_bg() -> None:
+    """Touch ``/tmp/bot_heartbeat`` every 30s so the Docker HEALTHCHECK
+    can tell the event loop is alive. If this task dies for any reason
+    the file goes stale and the container is marked unhealthy.
+    """
+    from pathlib import Path
+
+    hb = Path(_HEARTBEAT_PATH)
+    while True:
+        try:
+            hb.touch()
+        except OSError:
+            log.exception("heartbeat touch failed")
+        await asyncio.sleep(30)
 
 
 if __name__ == "__main__":
