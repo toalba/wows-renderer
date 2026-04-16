@@ -13,9 +13,16 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-COPY pyproject.toml ./
-RUN uv venv /app/.venv && \
-    uv pip install --python /app/.venv/bin/python -e "."
+# Install dependencies first (cached when only source changes).
+# `uv sync --no-install-project` resolves + installs everything from
+# pyproject.toml/uv.lock except the project itself.
+COPY pyproject.toml uv.lock LICENSE README.md ./
+RUN uv sync --no-install-project --no-dev
+
+# Copy source and finalise the install.
+COPY renderer/ renderer/
+COPY bot/ bot/
+RUN uv sync --no-dev
 
 # --- Runtime stage ---
 FROM python:3.12-slim
@@ -44,10 +51,10 @@ COPY renderer/ renderer/
 COPY bot/ bot/
 COPY scripts/ scripts/
 COPY render_quick.py ./
-
-# Re-install the project itself (editable install needs the source)
+# pyproject.toml is referenced by the editable install's .pth file in
+# .venv/ (created by uv sync in the builder stage). It must exist at
+# runtime for module discovery to work.
 COPY pyproject.toml ./
-RUN pip install --no-deps -e .
 
 # Liveness: the bot touches /tmp/bot_heartbeat every 30s from its event loop.
 # A stale file (>120s) means the loop is stuck or the task died.
