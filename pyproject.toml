@@ -10,7 +10,7 @@ dependencies = [
     "discord.py>=2.7.1",
     "click>=8.0",
     "rich>=15.0.0",
-    "python-dotenv>=1.0",
+    "python-dotenv>=1.2.2",
 ]
 
 [dependency-groups]
