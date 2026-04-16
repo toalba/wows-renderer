@@ -8,7 +8,7 @@ dependencies = [
     "pycairo>=1.26",
     "cairosvg>=2.7",
     "discord.py>=2.7.1",
-    "click>=8.0",
+    "click>=8.3.2",
     "rich>=15.0.0",
     "python-dotenv>=1.0",
 ]
