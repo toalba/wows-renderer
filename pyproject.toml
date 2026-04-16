@@ -9,7 +9,7 @@ dependencies = [
     "cairosvg>=2.7",
     "discord.py>=2.3",
     "click>=8.0",
-    "rich>=13.0",
+    "rich>=15.0.0",
     "python-dotenv>=1.0",
 ]
 
