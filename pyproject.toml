@@ -4,7 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.12"
 license = { file = "LICENSE" }
 dependencies = [
-    "wows-replay-parser",
+    "wows-replay-parser>=0.1.1",
     "pycairo>=1.26",
     "cairosvg>=2.7",
     "discord.py>=2.3",
@@ -25,12 +25,6 @@ dev = [
 wows-render = "renderer.cli:main"
 wows-bot = "bot.main:main"
 
-[tool.uv.sources]
-# Public git source. For local dev against a side-by-side checkout, run:
-#   uv pip install -e ../wows-replay-parser
-# after the initial `uv sync`.
-wows-replay-parser = { git = "https://github.com/toalba/wows-replay-parser.git", branch = "main" }
-
 [tool.hatch.build.targets.wheel]
 packages = ["renderer", "bot"]
 
@@ -40,10 +34,27 @@ build-backend = "hatchling.build"
 
 [tool.ruff]
 target-version = "py312"
-line-length = 100
+line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "TCH"]
+ignore = [
+    "TC001",  # typing-only first-party import
+    "TC002",  # typing-only third-party import (cairo is used at runtime)
+    "TC003",  # typing-only stdlib import
+    "N806",   # non-lowercase local
+    "SIM102", # collapsible if
+    "SIM103", # needless bool
+    "SIM105", # contextlib.suppress over try/except/pass
+    "SIM108", # ternary over if/else
+    "SIM114", # combine if branches with or
+    "SIM202", # negate != op
+    "B007",   # unused loop control
+    "B019",   # cached_property on instance methods
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["N806"]
 
 [tool.mypy]
 python_version = "3.12"

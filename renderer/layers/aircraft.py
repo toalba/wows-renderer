@@ -9,7 +9,7 @@ from typing import Any
 import cairo
 
 from renderer.gamedata_resolver import resolve_json_cache
-from renderer.layers.base import Layer, BaseRenderContext
+from renderer.layers.base import BaseRenderContext, Layer
 
 log = logging.getLogger(__name__)
 

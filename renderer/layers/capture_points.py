@@ -7,7 +7,7 @@ from pathlib import Path
 import cairo
 
 from renderer.gamedata_resolver import resolve_json_cache
-from renderer.layers.base import Layer, BaseRenderContext, FONT_FAMILY
+from renderer.layers.base import BaseRenderContext, Layer
 
 
 def _build_buff_drops(source_dir: Path) -> dict:

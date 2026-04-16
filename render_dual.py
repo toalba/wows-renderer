@@ -1,24 +1,27 @@
 """Dual-perspective render: merge two replays from the same match."""
-import sys, time
+import sys
+import time
 from pathlib import Path
-from renderer.config import RenderConfig
-from renderer.core import DualMinimapRenderer
-from renderer.gamedata_cache import resolve_for_replay, VersionedGamedata
-from renderer.layers.map_bg import MapBackgroundLayer
-from renderer.layers.ships import ShipLayer
-from renderer.layers.hud import HudLayer
-from renderer.layers.projectiles import ProjectileLayer
-from renderer.layers.capture_points import CapturePointLayer
-from renderer.layers.health_bars import HealthBarLayer
-from renderer.layers.consumables import ConsumableLayer
-from renderer.layers.smoke import SmokeLayer
-from renderer.layers.weather import WeatherLayer
-from renderer.layers.aircraft import AircraftLayer
-from renderer.layers.team_roster import TeamRosterLayer
-from renderer.layers.trails import TrailLayer
-from renderer.layers.killfeed import KillfeedLayer
+
 from wows_replay_parser import parse_replay
 from wows_replay_parser.merge import merge_replays
+
+from renderer.config import RenderConfig
+from renderer.core import DualMinimapRenderer
+from renderer.gamedata_cache import VersionedGamedata, resolve_for_replay
+from renderer.layers.aircraft import AircraftLayer
+from renderer.layers.capture_points import CapturePointLayer
+from renderer.layers.consumables import ConsumableLayer
+from renderer.layers.health_bars import HealthBarLayer
+from renderer.layers.hud import HudLayer
+from renderer.layers.killfeed import KillfeedLayer
+from renderer.layers.map_bg import MapBackgroundLayer
+from renderer.layers.projectiles import ProjectileLayer
+from renderer.layers.ships import ShipLayer
+from renderer.layers.smoke import SmokeLayer
+from renderer.layers.team_roster import TeamRosterLayer
+from renderer.layers.trails import TrailLayer
+from renderer.layers.weather import WeatherLayer
 
 REPLAY_A = sys.argv[1]
 REPLAY_B = sys.argv[2]

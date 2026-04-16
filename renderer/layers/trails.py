@@ -4,7 +4,7 @@ from bisect import bisect_left, bisect_right
 
 import cairo
 
-from renderer.layers.base import Layer, BaseRenderContext, SingleRenderContext
+from renderer.layers.base import BaseRenderContext, Layer, SingleRenderContext
 
 
 class TrailLayer(Layer):
@@ -61,7 +61,7 @@ class TrailLayer(Layer):
             timestamps.append(t)
             t += self.SAMPLE_INTERVAL
 
-        for t, state in zip(timestamps, replay.iter_states(timestamps)):
+        for t, state in zip(timestamps, replay.iter_states(timestamps), strict=False):
             for entity_id, ship in state.ships.items():
                 if not ship.is_alive:
                     continue

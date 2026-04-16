@@ -6,13 +6,10 @@ import math
 import cairo
 
 from renderer.layers.base import (
-    Layer,
     BaseRenderContext,
+    Layer,
     SingleRenderContext,
-    FONT_FAMILY,
-    _font_for_text,
 )
-
 
 # Species name from ships.json → icon key
 _SPECIES_TO_ICON: dict[str, str] = {
@@ -146,7 +143,11 @@ class ShipLayer(Layer):
                 team_color = config.self_color
                 icon_variant = "white"
             elif relation == 1 or (relation == 0 and not is_single):
-                team_color = config.division_color if is_div_mate else config.team_colors.get(0, (0.33, 0.85, 0.33, 1.0))
+                team_color = (
+                    config.division_color
+                    if is_div_mate
+                    else config.team_colors.get(0, (0.33, 0.85, 0.33, 1.0))
+                )
                 icon_variant = "ally"
             else:
                 team_color = config.team_colors.get(1, (0.90, 0.25, 0.25, 1.0))

@@ -5,8 +5,7 @@ from pathlib import Path
 
 import cairo
 
-from renderer.layers.base import Layer, BaseRenderContext, FONT_FAMILY
-
+from renderer.layers.base import FONT_FAMILY, BaseRenderContext, Layer
 
 # DEATH_REASON enum from battle.xml → (label, icon_frag filename)
 _DEATH_REASON: dict[int, tuple[str, str]] = {
@@ -128,7 +127,7 @@ class KillfeedLayer(Layer):
             if sender_info:
                 name, display_team = sender_info
             else:
-                name = f"Player"
+                name = "Player"
                 display_team = -1
             entries.append(_FeedEntry(
                 timestamp=event.timestamp,
@@ -311,8 +310,8 @@ class KillfeedLayer(Layer):
         x += self.draw_cached_text(cr, x, y, ": ", 0.7, 0.7, 0.7,
                                    alpha=alpha * 0.8, font_size=font_size, bold=False)
 
-        # Truncate message to fit panel
-        max_msg_width = config.total_width - x - 8
+        # Truncate message to fit panel (smart truncation TBD; for now we
+        # rely on the cairo clip set up in render() to crop overflow).
         msg = entry.message
         # Simple truncation — could be smarter but good enough
         self.draw_cached_text(cr, x, y, msg, 0.9, 0.9, 0.9,

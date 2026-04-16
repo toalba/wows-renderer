@@ -6,6 +6,7 @@ and platforms. Instead we compute a normalized mean-squared-error (MSE)
 over RGBA bytes and pass under a small threshold.
 """
 from __future__ import annotations
+
 import os
 import shutil
 from pathlib import Path
@@ -46,7 +47,7 @@ def _mse(a: bytes, b: bytes) -> float:
         return 0.0
     # Python-level loop is fine for modest image sizes (<2MP); avoids numpy dep.
     total = 0
-    for x, y in zip(a, b):
+    for x, y in zip(a, b, strict=True):
         d = x - y
         total += d * d
     return total / (len(a) * 255.0 * 255.0)

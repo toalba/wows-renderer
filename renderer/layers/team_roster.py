@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import math
+
 import cairo
 
-from renderer.assets import CONSUMABLE_TYPE_ID_MAP, CONSUMABLE_TYPE_TO_ICONS, CONSUMABLE_TYPE_TO_CATEGORY
+from renderer.assets import CONSUMABLE_TYPE_ID_MAP, CONSUMABLE_TYPE_TO_ICONS
 from renderer.layers.base import (
-    Layer,
-    BaseRenderContext,
-    SingleRenderContext,
     FONT_FAMILY,
+    BaseRenderContext,
+    Layer,
+    SingleRenderContext,
     _font_for_text,
 )
 
@@ -422,7 +423,6 @@ class TeamRosterLayer(Layer):
         #   hp strip — thin bar at very bottom of row
         line1_y = y + row_h * 0.35
         line2_y = y + row_h * 0.72
-        hp_y    = y + row_h - 3
 
         # --- Class icon (vertically centred across all three lines) ---
         icon_key = self._entity_species.get(entity_id)
@@ -534,7 +534,12 @@ class TeamRosterLayer(Layer):
         cr.rectangle(hp_bar_x, hp_bar_y, hp_w, hp_h)
         cr.fill()
         if hp_frac > 0:
-            hr, hg, hb = (0.2, 0.9, 0.2) if hp_frac > 0.66 else ((1.0, 0.85, 0.0) if hp_frac > 0.33 else (1.0, 0.2, 0.2))
+            if hp_frac > 0.66:
+                hr, hg, hb = (0.2, 0.9, 0.2)
+            elif hp_frac > 0.33:
+                hr, hg, hb = (1.0, 0.85, 0.0)
+            else:
+                hr, hg, hb = (1.0, 0.2, 0.2)
             cr.set_source_rgba(hr, hg, hb, alpha)
             cr.rectangle(hp_bar_x, hp_bar_y, hp_w * hp_frac, hp_h)
             cr.fill()

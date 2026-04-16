@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import cairo
 
-from renderer.layers.base import Layer, SingleRenderContext, FONT_FAMILY
+from renderer.layers.base import FONT_FAMILY, Layer, SingleRenderContext
 
 # damage_param → short display label
 _CATEGORY_MAP: dict[str, str] = {

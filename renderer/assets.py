@@ -1,16 +1,16 @@
 from __future__ import annotations
+
 import json
 import logging
 import struct
 from pathlib import Path
 from typing import Any
 
+import cairo
+
 from renderer.gamedata_resolver import resolve_json_cache
 
 log = logging.getLogger(__name__)
-
-import cairo
-
 
 DEFAULT_MAP_SIZE = 1400.0  # Reasonable fallback
 
@@ -160,9 +160,10 @@ _SPECIES_ICON_MAP: dict[str, str] = {
 
 def _svg_to_surface(svg_text: str, target_height: int = 18) -> cairo.ImageSurface:
     """Rasterize an SVG string to a cairo surface at a fixed output height."""
-    import cairosvg
     import io
     import re
+
+    import cairosvg
 
     # Parse original viewport for aspect ratio
     w_match = re.search(r'width="(\d+)"', svg_text)

@@ -7,8 +7,8 @@ import logging
 import discord
 from discord.ext import commands
 
-from bot.config import BotConfig
 from bot.cog_render import RenderCog
+from bot.config import BotConfig
 
 log = logging.getLogger(__name__)
 

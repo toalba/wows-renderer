@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 import cairo
-from renderer.layers.base import Layer, BaseRenderContext, FONT_FAMILY
+
 from renderer.assets import load_minimap, load_minimap_water
+from renderer.layers.base import FONT_FAMILY, BaseRenderContext, Layer
 
 
 class MapBackgroundLayer(Layer):

@@ -109,7 +109,7 @@ class RenderCog(commands.Cog):
                 remaining = deadline - asyncio.get_event_loop().time()
                 if remaining <= 0:
                     future.cancel()
-                    raise asyncio.TimeoutError
+                    raise TimeoutError
                 await asyncio.sleep(min(2, remaining))
                 # Drain queue
                 new_msg = last_msg
@@ -218,7 +218,7 @@ class RenderCog(commands.Cog):
                 game_version,
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await interaction.edit_original_response(
                 content=f"Render timed out after {self.config.render_timeout}s.",
             )

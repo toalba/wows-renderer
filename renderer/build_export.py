@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from wows_replay_parser.api import ParsedReplay
+
     from renderer.gamedata_cache import VersionedGamedata
 
 log = logging.getLogger(__name__)

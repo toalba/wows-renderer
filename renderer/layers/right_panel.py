@@ -6,15 +6,13 @@ Toggle this one layer to show/hide the entire right panel.
 """
 from __future__ import annotations
 
-import math
-
 import cairo
 
-from renderer.layers.base import Layer, SingleRenderContext, FONT_FAMILY
-from renderer.layers.player_header import PlayerHeaderLayer
+from renderer.layers.base import Layer, SingleRenderContext
 from renderer.layers.damage_stats import DamageStatsLayer
-from renderer.layers.ribbons import RibbonLayer
 from renderer.layers.killfeed import KillfeedLayer
+from renderer.layers.player_header import PlayerHeaderLayer
+from renderer.layers.ribbons import RibbonLayer
 
 
 class RightPanelLayer(Layer):
@@ -61,7 +59,7 @@ class RightPanelLayer(Layer):
             return
 
         s = self.ctx.scale
-        pad = self.PADDING * s
+        _pad = self.PADDING * s  # noqa: F841 — sub-layers compute their own padding; kept for future composite header
         panel_x = config.left_panel + config.minimap_size
 
         # Clip to right panel
@@ -82,4 +80,4 @@ class RightPanelLayer(Layer):
         cr.restore()
 
     def _sub_layers(self):
-        return [l for l in (self._header, self._damage, self._ribbons, self._killfeed) if l]
+        return [layer for layer in (self._header, self._damage, self._ribbons, self._killfeed) if layer]

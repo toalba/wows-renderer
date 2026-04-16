@@ -10,8 +10,7 @@ from pathlib import Path
 
 import cairo
 
-from renderer.layers.base import Layer, SingleRenderContext, FONT_FAMILY
-
+from renderer.layers.base import FONT_FAMILY, Layer, SingleRenderContext
 
 # Ribbon groups: (parent_id, [sub_ids])
 # Parent count = sum of children when children exist.

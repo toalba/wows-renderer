@@ -1,6 +1,8 @@
 from __future__ import annotations
+
 import cairo
-from renderer.layers.base import Layer, BaseRenderContext, FONT_FAMILY
+
+from renderer.layers.base import FONT_FAMILY, BaseRenderContext, Layer
 
 
 class HudLayer(Layer):

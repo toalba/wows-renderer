@@ -15,6 +15,7 @@ If any fixture is missing, tests skip cleanly with instructions on how to
 generate reference images locally.
 """
 from __future__ import annotations
+
 import os
 from pathlib import Path
 
@@ -56,12 +57,12 @@ def _build_default_layers():
     """A representative, stable layer stack. Omits layers that depend on
     rarely-populated state (weather, trails) to keep comparison deterministic.
     """
-    from renderer.layers.map_bg import MapBackgroundLayer
-    from renderer.layers.team_roster import TeamRosterLayer
     from renderer.layers.capture_points import CapturePointLayer
-    from renderer.layers.ships import ShipLayer
     from renderer.layers.health_bars import HealthBarLayer
     from renderer.layers.hud import HudLayer
+    from renderer.layers.map_bg import MapBackgroundLayer
+    from renderer.layers.ships import ShipLayer
+    from renderer.layers.team_roster import TeamRosterLayer
     return [
         MapBackgroundLayer(),
         TeamRosterLayer(),
@@ -131,12 +132,13 @@ def test_dual_render_golden(
 
     from wows_replay_parser import parse_replay
     from wows_replay_parser.merge import merge_replays
+
     from renderer.frame_dump import render_dual_frame_to_png
-    from renderer.layers.map_bg import MapBackgroundLayer
     from renderer.layers.capture_points import CapturePointLayer
-    from renderer.layers.ships import ShipLayer
     from renderer.layers.health_bars import HealthBarLayer
     from renderer.layers.hud import HudLayer
+    from renderer.layers.map_bg import MapBackgroundLayer
+    from renderer.layers.ships import ShipLayer
 
     replay_a_path, replay_b_path = paired
     entity_defs = Path(gamedata_path) / "scripts_entity" / "entity_defs"

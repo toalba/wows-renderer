@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import cairo
 
-from renderer.layers.base import Layer, BaseRenderContext, FONT_FAMILY
+from renderer.layers.base import BaseRenderContext, Layer
 
 
 class HealthBarLayer(Layer):

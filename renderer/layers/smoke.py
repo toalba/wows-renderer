@@ -6,7 +6,7 @@ import math
 
 import cairo
 
-from renderer.layers.base import Layer, BaseRenderContext
+from renderer.layers.base import BaseRenderContext, Layer
 
 
 class SmokeLayer(Layer):

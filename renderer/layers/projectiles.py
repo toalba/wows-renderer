@@ -6,7 +6,7 @@ from bisect import bisect_right
 import cairo
 
 from renderer.assets import load_projectiles_db
-from renderer.layers.base import Layer, BaseRenderContext
+from renderer.layers.base import BaseRenderContext, Layer
 
 # Ammo type colors: AP=white, HE=orange, SAP/CS=purple
 _AMMO_COLORS: dict[str, tuple[float, float, float]] = {

@@ -9,8 +9,8 @@ from pathlib import Path
 
 import cairo
 
-from renderer.assets import get_ship_display_name, load_ship_consumables, load_ships_db
-from renderer.layers.base import Layer, SingleRenderContext, FONT_FAMILY
+from renderer.assets import get_ship_display_name, load_ship_consumables
+from renderer.layers.base import FONT_FAMILY, Layer, SingleRenderContext
 
 
 def _hp_color(fraction: float) -> tuple[float, float, float]:

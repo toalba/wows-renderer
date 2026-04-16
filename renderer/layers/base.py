@@ -1,7 +1,8 @@
 from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import ClassVar, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, ClassVar
 
 import cairo
 
@@ -33,6 +34,7 @@ def _font_for_text(text: str) -> str:
 if TYPE_CHECKING:
     from wows_replay_parser.interfaces import ReplaySource
     from wows_replay_parser.roster import PlayerInfo
+
     from renderer.config import RenderConfig
 
 

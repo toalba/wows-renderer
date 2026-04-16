@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -18,9 +19,16 @@ class GameStateAdapter:
     player_lookup: dict[int, PlayerInfo]
 
     @classmethod
-    def from_replay(cls, replay: ParsedReplay, minimap_size: int = 760, panel_width: int = 220, gamedata_path: str | Path | None = None) -> GameStateAdapter:
+    def from_replay(
+        cls,
+        replay: ParsedReplay,
+        minimap_size: int = 760,
+        panel_width: int = 220,
+        gamedata_path: str | Path | None = None,
+    ) -> GameStateAdapter:
         """Build an adapter from a parsed replay."""
         from pathlib import Path
+
         from renderer.assets import get_map_size
 
         player_lookup = {p.entity_id: p for p in replay.players}

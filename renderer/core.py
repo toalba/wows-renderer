@@ -1,7 +1,9 @@
 from __future__ import annotations
+
+from collections.abc import Callable
 from pathlib import Path
 from time import perf_counter
-from typing import Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 import cairo
 
@@ -12,13 +14,13 @@ from renderer.assets import (
     load_ships_db,
 )
 from renderer.config import RenderConfig
+from renderer.game_state import GameStateAdapter
 from renderer.layers.base import (
     BaseRenderContext,
     DualRenderContext,
     Layer,
     SingleRenderContext,
 )
-from renderer.game_state import GameStateAdapter
 from renderer.video import FFmpegPipe, FrameWriter
 
 if TYPE_CHECKING:
@@ -49,7 +51,7 @@ class BaseMinimapRenderer:
     # ------------------------------------------------------------------
     def _build_context(
         self,
-        replay: "ReplaySource",
+        replay: ReplaySource,
         gamedata_path: Path,
     ) -> BaseRenderContext:
         """Build the render context for ``replay``.
@@ -60,7 +62,7 @@ class BaseMinimapRenderer:
         raise NotImplementedError
 
     @staticmethod
-    def _battle_start_time(replay: "ReplaySource") -> float:
+    def _battle_start_time(replay: ReplaySource) -> float:
         """Return the timestamp where the battle becomes active."""
         battle_start = getattr(replay, "battle_start_time", None)
         return battle_start if battle_start is not None else 0.0
@@ -70,7 +72,7 @@ class BaseMinimapRenderer:
     # ------------------------------------------------------------------
     def _render_frames(
         self,
-        replay: "ReplaySource",
+        replay: ReplaySource,
         render_ctx: BaseRenderContext,
         output_path: Path,
         progress_callback: Callable[[int, int], None] | None,
@@ -118,7 +120,7 @@ class BaseMinimapRenderer:
             # state_at() which is O(history) per frame.
             state_iter = replay.iter_states(timestamps)
 
-            for frame_idx, (t, state) in enumerate(zip(timestamps, state_iter)):
+            for frame_idx, (t, state) in enumerate(zip(timestamps, state_iter, strict=False)):
                 # 1. Clear surface
                 cr.save()
                 cr.set_operator(cairo.OPERATOR_CLEAR)
@@ -157,7 +159,7 @@ class BaseMinimapRenderer:
 
     def render(
         self,
-        replay: "ReplaySource",
+        replay: ReplaySource,
         output_path: str | Path = "output.mp4",
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> Path:
@@ -182,7 +184,7 @@ class MinimapRenderer(BaseMinimapRenderer):
     used by the Discord bot and quick-render for regular single-replay jobs.
     """
 
-    def __init__(self, config: RenderConfig, replay: "ParsedReplay | None" = None) -> None:
+    def __init__(self, config: RenderConfig, replay: ParsedReplay | None = None) -> None:
         super().__init__(config)
         self.replay = replay
 
@@ -194,7 +196,7 @@ class MinimapRenderer(BaseMinimapRenderer):
         *,
         entity_defs_path: str | Path | None = None,
         auto_update_gamedata: bool = False,
-    ) -> "MinimapRenderer":
+    ) -> MinimapRenderer:
         """Create a renderer with a parsed replay from the local replay parser.
 
         Args:
@@ -222,13 +224,13 @@ class MinimapRenderer(BaseMinimapRenderer):
         return cls(config, replay=replay)
 
     @staticmethod
-    def _detect_battle_start(replay: "ParsedReplay") -> float:
+    def _detect_battle_start(replay: ParsedReplay) -> float:
         """Back-compat shim (pre-refactor name). Delegates to the base class."""
         return BaseMinimapRenderer._battle_start_time(replay)
 
     def _build_context(
         self,
-        replay: "ReplaySource",
+        replay: ReplaySource,
         gamedata_path: Path,
     ) -> SingleRenderContext:
         adapter = GameStateAdapter.from_replay(
@@ -264,7 +266,7 @@ class MinimapRenderer(BaseMinimapRenderer):
 
     def render(  # type: ignore[override]
         self,
-        replay: "ParsedReplay | None" = None,
+        replay: ParsedReplay | None = None,
         output_path: str | Path = "output.mp4",
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> Path:
@@ -306,7 +308,7 @@ class DualMinimapRenderer(BaseMinimapRenderer):
     and won't accept a :class:`DualRenderContext`.
     """
 
-    def __init__(self, config: RenderConfig, replay: "MergedReplay | None" = None) -> None:
+    def __init__(self, config: RenderConfig, replay: MergedReplay | None = None) -> None:
         super().__init__(config)
         self.replay = replay
 
@@ -318,7 +320,7 @@ class DualMinimapRenderer(BaseMinimapRenderer):
         config: RenderConfig,
         *,
         entity_defs_path: str | Path | None = None,
-    ) -> "DualMinimapRenderer":
+    ) -> DualMinimapRenderer:
         """Parse both replays and construct a merged renderer."""
         from wows_replay_parser import parse_replay
         from wows_replay_parser.merge import merge_replays
@@ -332,7 +334,7 @@ class DualMinimapRenderer(BaseMinimapRenderer):
         return cls(config, replay=merged)
 
     @staticmethod
-    def _extract_replay_meta(replay: "ParsedReplay") -> dict:
+    def _extract_replay_meta(replay: ParsedReplay) -> dict:
         """Pull a minimal label-friendly dict from a single replay's meta."""
         meta = replay.meta
         return {
@@ -342,7 +344,7 @@ class DualMinimapRenderer(BaseMinimapRenderer):
 
     def _build_context(
         self,
-        replay: "ReplaySource",
+        replay: ReplaySource,
         gamedata_path: Path,
     ) -> DualRenderContext:
         """Build a :class:`DualRenderContext` for a merged replay.
@@ -384,7 +386,7 @@ class DualMinimapRenderer(BaseMinimapRenderer):
 
     def render(  # type: ignore[override]
         self,
-        replay: "MergedReplay | None" = None,
+        replay: MergedReplay | None = None,
         output_path: str | Path = "output_dual.mp4",
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> Path:

@@ -5,6 +5,7 @@ cairo surface at a given timestamp and writes it to PNG. Used by golden-image
 regression tests and can be used for Discord embed thumbnails.
 """
 from __future__ import annotations
+
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,18 +14,19 @@ import cairo
 from renderer.core import DualMinimapRenderer, MinimapRenderer
 
 if TYPE_CHECKING:
-    from renderer.config import RenderConfig
-    from renderer.layers.base import Layer
     from wows_replay_parser.interfaces import ReplaySource
     from wows_replay_parser.merge import MergedReplay
+
+    from renderer.config import RenderConfig
+    from renderer.layers.base import Layer
 
 
 def _render_once(
     renderer: MinimapRenderer | DualMinimapRenderer,
-    replay: "ReplaySource",
+    replay: ReplaySource,
     timestamp: float,
     output_path: Path,
-    layers: list["Layer"],
+    layers: list[Layer],
 ) -> Path:
     config = renderer.config
     for layer in layers:
@@ -60,11 +62,11 @@ def _render_once(
 
 
 def render_frame_to_png(
-    replay: "ReplaySource",
-    config: "RenderConfig",
+    replay: ReplaySource,
+    config: RenderConfig,
     timestamp: float,
     output_path: str | Path,
-    layers: list["Layer"],
+    layers: list[Layer],
 ) -> Path:
     """Render one frame at ``timestamp`` and write it to ``output_path`` as PNG."""
     renderer = MinimapRenderer(config)
@@ -72,11 +74,11 @@ def render_frame_to_png(
 
 
 def render_dual_frame_to_png(
-    merged: "MergedReplay",
-    config: "RenderConfig",
+    merged: MergedReplay,
+    config: RenderConfig,
     timestamp: float,
     output_path: str | Path,
-    layers: list["Layer"],
+    layers: list[Layer],
 ) -> Path:
     """Dual-render variant — one frame from a merged replay to PNG."""
     renderer = DualMinimapRenderer(config)

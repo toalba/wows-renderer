@@ -42,19 +42,19 @@ def render_replay(
 
     from renderer.config import RenderConfig
     from renderer.core import MinimapRenderer
-    from renderer.gamedata_cache import resolve_for_replay, VersionedGamedata
-    from renderer.layers.map_bg import MapBackgroundLayer
-    from renderer.layers.ships import ShipLayer
-    from renderer.layers.hud import HudLayer
-    from renderer.layers.projectiles import ProjectileLayer
-    from renderer.layers.capture_points import CapturePointLayer
-    from renderer.layers.health_bars import HealthBarLayer
-    from renderer.layers.consumables import ConsumableLayer
-    from renderer.layers.smoke import SmokeLayer
-    from renderer.layers.weather import WeatherLayer
+    from renderer.gamedata_cache import VersionedGamedata, resolve_for_replay
     from renderer.layers.aircraft import AircraftLayer
-    from renderer.layers.team_roster import TeamRosterLayer
+    from renderer.layers.capture_points import CapturePointLayer
+    from renderer.layers.consumables import ConsumableLayer
+    from renderer.layers.health_bars import HealthBarLayer
+    from renderer.layers.hud import HudLayer
+    from renderer.layers.map_bg import MapBackgroundLayer
+    from renderer.layers.projectiles import ProjectileLayer
     from renderer.layers.right_panel import RightPanelLayer
+    from renderer.layers.ships import ShipLayer
+    from renderer.layers.smoke import SmokeLayer
+    from renderer.layers.team_roster import TeamRosterLayer
+    from renderer.layers.weather import WeatherLayer
 
     timings: dict[str, float] = {}
     gamedata_repo = Path(gamedata_path).parent  # gamedata_path is repo/data, parent is repo
