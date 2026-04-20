@@ -68,6 +68,8 @@ class FFmpegPipe:
         cmd = [
             "ffmpeg",
             "-y",                        # Overwrite output
+            "-loglevel", "error",        # Silence banner + stream info; only print real errors
+            "-nostats",                  # Suppress per-second progress lines on stderr
             "-f", "rawvideo",            # Raw input format
             "-pix_fmt", "bgra",          # Input pixel format (cairo ARGB32 = BGRA on LE)
             "-s", f"{width}x{height}",   # Frame size
