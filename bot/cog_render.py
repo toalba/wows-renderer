@@ -8,6 +8,7 @@ import queue
 import shutil
 import tempfile
 import time
+import zipfile
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
@@ -39,6 +40,46 @@ def _batch_cooldown(interaction: discord.Interaction) -> app_commands.Cooldown |
     if interaction.guild_id in cog.config.authorized_guild_ids:  # type: ignore[attr-defined]
         return app_commands.Cooldown(1, BATCH_COOLDOWN_SECONDS)
     return None
+
+
+def _extract_replays_from_zip(
+    zip_path: Path,
+    dst_dir: Path,
+    max_file_size: int,
+    already: int,
+    cap: int,
+) -> tuple[list[tuple[str, Path]], list[tuple[str, str]]]:
+    """Extract .wowsreplay files from a zip into ``dst_dir``.
+
+    Returns (extracted, skipped). ``extracted`` is a list of (display_name,
+    extracted_path). ``skipped`` is a list of (entry_name, reason) for zip
+    entries that couldn't be included (non-wowsreplay, oversized, cap hit).
+    """
+    extracted: list[tuple[str, Path]] = []
+    skipped: list[tuple[str, str]] = []
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            for info in zf.infolist():
+                if info.is_dir():
+                    continue
+                base = Path(info.filename).name
+                if not base.lower().endswith(".wowsreplay"):
+                    continue
+                if info.file_size > max_file_size:
+                    skipped.append(
+                        (base, f"{info.file_size / 1024 / 1024:.1f} MB exceeds limit"),
+                    )
+                    continue
+                if already + len(extracted) >= cap:
+                    skipped.append((base, f"over {cap}-replay cap"))
+                    continue
+                out_path = dst_dir / f"zip_{already + len(extracted)}_{base}"
+                with zf.open(info) as src, open(out_path, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                extracted.append((base, out_path))
+    except zipfile.BadZipFile:
+        skipped.append((zip_path.name, "not a valid zip file"))
+    return extracted, skipped
 
 
 @dataclass
@@ -411,16 +452,16 @@ class RenderCog(commands.Cog):
         description=f"Render up to {BATCH_MAX_REPLAYS} replays in one batch (authorized servers only)",
     )
     @app_commands.describe(
-        replay1="Replay 1 (required)",
-        replay2="Replay 2",
-        replay3="Replay 3",
-        replay4="Replay 4",
-        replay5="Replay 5",
-        replay6="Replay 6",
-        replay7="Replay 7",
-        replay8="Replay 8",
-        replay9="Replay 9",
-        replay10="Replay 10",
+        replay1="Replay or .zip (required)",
+        replay2="Replay or .zip",
+        replay3="Replay or .zip",
+        replay4="Replay or .zip",
+        replay5="Replay or .zip",
+        replay6="Replay or .zip",
+        replay7="Replay or .zip",
+        replay8="Replay or .zip",
+        replay9="Replay or .zip",
+        replay10="Replay or .zip",
         preset="Render preset (default: full)",
     )
     @app_commands.choices(preset=[
@@ -461,8 +502,10 @@ class RenderCog(commands.Cog):
         valid: list[discord.Attachment] = []
         rejected: list[tuple[str, str]] = []
         for a in attachments:
-            if not a.filename.endswith(".wowsreplay"):
-                rejected.append((a.filename, "not a .wowsreplay file"))
+            # Accept .wowsreplay directly, or .zip which we'll expand after download.
+            lower = a.filename.lower()
+            if not (lower.endswith(".wowsreplay") or lower.endswith(".zip")):
+                rejected.append((a.filename, "not a .wowsreplay or .zip file"))
             elif a.size > max_bytes:
                 rejected.append((a.filename, f"{a.size / 1024 / 1024:.1f} MB > {self.config.max_upload_mb} MB"))
             else:
@@ -476,7 +519,7 @@ class RenderCog(commands.Cog):
             return
 
         log.info(
-            "/render_batch start: user=%s guild=%s valid=%d rejected=%d preset=%s",
+            "/render_batch start: user=%s guild=%s attachments=%d rejected=%d preset=%s",
             interaction.user.id, interaction.guild_id,
             len(valid), len(rejected), preset_value,
         )
@@ -485,24 +528,60 @@ class RenderCog(commands.Cog):
         batch_tmp = tempfile.mkdtemp(prefix="wows_batch_")
         cfg = self.config
         try:
-            # Prepare per-item paths — both input and output prefixed with idx to avoid collisions
+            # Download all attachments first (zip or wowsreplay). Zip
+            # expansion happens afterwards so a broken zip doesn't block
+            # other replays.
+            await interaction.edit_original_response(
+                content=f"Downloading {len(valid)} attachment{'s' if len(valid) > 1 else ''}...",
+            )
+            downloaded: list[tuple[discord.Attachment, Path]] = []
+            for i, a in enumerate(valid):
+                dst = Path(batch_tmp) / f"att{i}_{Path(a.filename).name}"
+                downloaded.append((a, dst))
+            await asyncio.gather(
+                *[a.save(dst) for a, dst in downloaded],
+            )
+
+            # Expand everything into a flat list of replay paths (dedup by
+            # cap at BATCH_MAX_REPLAYS). Zips contribute their internal
+            # .wowsreplay entries; direct .wowsreplay uploads just pass through.
+            replay_sources: list[tuple[str, Path]] = []  # (display_name, replay_path)
+            for a, dst in downloaded:
+                if dst.suffix.lower() == ".zip":
+                    extracted, zip_skipped = _extract_replays_from_zip(
+                        dst, Path(batch_tmp), max_bytes,
+                        already=len(replay_sources),
+                        cap=BATCH_MAX_REPLAYS,
+                    )
+                    for name, path in extracted:
+                        replay_sources.append((name, path))
+                    for skip_name, reason in zip_skipped:
+                        rejected.append((f"{a.filename}::{skip_name}", reason))
+                    if not extracted and not zip_skipped:
+                        rejected.append((a.filename, "zip contained no .wowsreplay files"))
+                else:
+                    if len(replay_sources) >= BATCH_MAX_REPLAYS:
+                        rejected.append((a.filename, f"over {BATCH_MAX_REPLAYS}-replay cap"))
+                        continue
+                    replay_sources.append((Path(a.filename).name, dst))
+
+            if not replay_sources:
+                details = "\n".join(f"• `{n}`: {r}" for n, r in rejected) or "(no usable replays)"
+                await interaction.edit_original_response(
+                    content=f"No valid replays to render:\n{details}",
+                )
+                return
+
+            # Build items now that we know the full flat replay list.
             items = [
                 _BatchItem(
                     index=idx,
-                    filename=Path(a.filename).name,
-                    replay_path=Path(batch_tmp) / f"r{idx}_{Path(a.filename).name}",
-                    output_path=Path(batch_tmp) / f"r{idx}_{Path(a.filename).stem}.mp4",
+                    filename=name,
+                    replay_path=path,
+                    output_path=Path(batch_tmp) / f"r{idx}_{Path(name).stem}.mp4",
                 )
-                for idx, a in enumerate(valid)
+                for idx, (name, path) in enumerate(replay_sources)
             ]
-
-            # Download all in parallel
-            await interaction.edit_original_response(
-                content=f"Downloading {len(items)} replay{'s' if len(items) > 1 else ''}...",
-            )
-            await asyncio.gather(
-                *[a.save(item.replay_path) for a, item in zip(valid, items, strict=True)],
-            )
 
             batch_start = time.monotonic()
             # Per-replay timeout accounts for queue-wait when len(items) > max_workers
