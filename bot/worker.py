@@ -5,6 +5,7 @@ All imports are inside the function body so it stays picklable.
 from __future__ import annotations
 
 import logging
+import os
 from multiprocessing import Queue
 
 log = logging.getLogger(__name__)
@@ -150,16 +151,25 @@ def render_replay(
     timings["setup"] = renderer.timings.get("setup", 0.0)
     timings["layer_init"] = renderer.timings.get("layer_init", {})
 
-    # Generate ShipBuilder build URLs for all players
+    # Generate ShipBuilder build URLs for all players.
+    # Disabled by default — the feature walks the ~15 MB gameparams dict
+    # and has historically been a perf footgun plus the resulting embed
+    # regularly exceeds Discord's 1024-char per-field limit. Set
+    # ENABLE_BUILD_URLS=true in .env to re-enable for A/B testing.
     build_urls: list[tuple[str, str, int, str | None]] = []
     t_builds = perf_counter()
-    try:
-        from renderer.build_export import generate_all_build_urls
-        build_urls = generate_all_build_urls(replay, vgd)
-    except Exception:
-        log.exception("worker: build_urls generation failed")
+    if os.environ.get("ENABLE_BUILD_URLS", "false").lower() in ("1", "true", "yes"):
+        try:
+            from renderer.build_export import generate_all_build_urls
+            build_urls = generate_all_build_urls(replay, vgd)
+        except Exception:
+            log.exception("worker: build_urls generation failed")
     timings["build_urls"] = perf_counter() - t_builds
-    log.info("worker: build_urls done in %.2fs (%d entries)", timings["build_urls"], len(build_urls))
+    log.info(
+        "worker: build_urls %s in %.2fs (%d entries)",
+        "generated" if build_urls else "skipped",
+        timings["build_urls"], len(build_urls),
+    )
 
     game_type = replay.meta.get("gameType", "Unknown")
     return output_path, replay.duration, timings, replay.game_version, len(replay.players), game_type, build_urls
