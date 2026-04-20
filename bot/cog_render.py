@@ -354,7 +354,7 @@ class RenderCog(commands.Cog):
                 _, replay_duration, timings, game_version, _num_players, game_type, _build_urls = (
                     await asyncio.wait_for(future, timeout=timeout)
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 future.cancel()
                 return _BatchResult(item=item, ok=False, error=f"timed out after {int(timeout)}s")
             except BrokenProcessPool:
@@ -471,7 +471,9 @@ class RenderCog(commands.Cog):
             await interaction.edit_original_response(
                 content=f"Downloading {len(items)} replay{'s' if len(items) > 1 else ''}...",
             )
-            await asyncio.gather(*[a.save(item.replay_path) for a, item in zip(valid, items)])
+            await asyncio.gather(
+                *[a.save(item.replay_path) for a, item in zip(valid, items, strict=True)],
+            )
 
             batch_start = time.monotonic()
             # Per-replay timeout accounts for queue-wait when len(items) > max_workers
@@ -492,11 +494,10 @@ class RenderCog(commands.Cog):
 
             # Stream results as they land
             results: list[_BatchResult] = []
-            completed = 0
             pool_died_seen = False
-            for coro in asyncio.as_completed(tasks):
+            for i, coro in enumerate(asyncio.as_completed(tasks)):
                 result = await coro
-                completed += 1
+                completed = i + 1
                 results.append(result)
                 pool_died_seen = pool_died_seen or result.pool_died
 
