@@ -6,7 +6,6 @@ import cairo
 
 from renderer.assets import CONSUMABLE_TYPE_ID_MAP, CONSUMABLE_TYPE_TO_ICONS
 from renderer.layers.base import (
-    FONT_FAMILY,
     BaseRenderContext,
     Layer,
     SingleRenderContext,
@@ -423,12 +422,11 @@ class TeamRosterLayer(Layer):
         cr.set_source_rgba(r, g, b, 0.9)
         cr.rectangle(0, y, 3, h)
         cr.fill()
-        cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        cr.set_font_size(10.0)
-        ext = cr.text_extents(label)
-        cr.set_source_rgba(r, g, b, 1.0)
-        cr.move_to(self.PAD_X + 4, y + (h + ext.height) / 2)
-        cr.show_text(label)
+        # Cached + halo'd label; same visual as other cached text in this layer.
+        surf, tw, ascent = Layer.get_cached_text(cr, label, 10.0, True, r, g, b)
+        baseline_y = y + (h + ascent) / 2
+        self.draw_cached_text(cr, self.PAD_X + 4, baseline_y, label,
+                              r, g, b, font_size=10.0, bold=True)
         return y + h
 
     def _draw_row(self, cr, y, panel_w, row_h, entity_id,
@@ -478,12 +476,16 @@ class TeamRosterLayer(Layer):
         stat_icon_size = 11
 
         # --- Line 1: player name (left) | kills (right) ---
-        cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        cr.set_font_size(self.STAT_FONT_SIZE)
+        # Stats use cached text surfaces — kills/damage values repeat heavily
+        # across frames (14 players × 889 frames = 12.4k show_text calls per
+        # slot otherwise; profile showed these sites burning meaningful time).
+        kills_text_w = 0.0
         if kills > 0:
             kills_text = str(kills)
-            kills_ext = cr.text_extents(kills_text)
-            kills_block_x = stat_x - kills_ext.width
+            _, kills_text_w, _ = Layer.get_cached_text(
+                cr, kills_text, self.STAT_FONT_SIZE, True, tr, tg, tb,
+            )
+            kills_block_x = stat_x - kills_text_w
             frags_icon = self._stat_icons.get("frags")
             if frags_icon:
                 fiw, fih = frags_icon.get_width(), frags_icon.get_height()
@@ -494,12 +496,13 @@ class TeamRosterLayer(Layer):
                 cr.set_source_surface(frags_icon, 0, 0)
                 cr.paint_with_alpha(alpha * 0.85)
                 cr.restore()
-            cr.set_source_rgba(tr, tg, tb, alpha)
-            cr.move_to(kills_block_x, line1_y)
-            cr.show_text(kills_text)
+            self.draw_cached_text(
+                cr, kills_block_x, line1_y, kills_text, tr, tg, tb,
+                alpha=alpha, font_size=self.STAT_FONT_SIZE, bold=True,
+            )
 
         name = player.name or "?"
-        kills_w = (cr.text_extents(str(kills)).width + stat_icon_size + 4) if kills > 0 else 0
+        kills_w = (kills_text_w + stat_icon_size + 4) if kills > 0 else 0
         max_name_w = stat_x - kills_w - 6 - text_x
         truncated_name = _truncate(cr, name, max_name_w, self.NAME_FONT_SIZE)
         # Division mates get gold name highlighting (single-replay only;
@@ -513,13 +516,17 @@ class TeamRosterLayer(Layer):
 
         # --- Line 2: ship name (left) | consumables (center) | damage (right) ---
         dmg_text = _fmt_damage(damage)
-        cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-        cr.set_font_size(self.STAT_FONT_SIZE)
-        dmg_ext = cr.text_extents(dmg_text)
+        if damage > 0:
+            dr, dg, db = 0.85, 0.78, 0.55
+        else:
+            dr, dg, db = 0.4, 0.4, 0.4
+        _, dmg_text_w, _ = Layer.get_cached_text(
+            cr, dmg_text, self.STAT_FONT_SIZE, False, dr, dg, db,
+        )
 
         # Damage icon + number right-aligned
         dmg_icon = self._stat_icons.get("damage")
-        dmg_block_x = stat_x - dmg_ext.width
+        dmg_block_x = stat_x - dmg_text_w
         if dmg_icon:
             iw, ih = dmg_icon.get_width(), dmg_icon.get_height()
             iscale = stat_icon_size / max(iw, ih)
@@ -529,9 +536,10 @@ class TeamRosterLayer(Layer):
             cr.set_source_surface(dmg_icon, 0, 0)
             cr.paint_with_alpha(alpha * 0.85)
             cr.restore()
-        cr.set_source_rgba(*(  (0.85, 0.78, 0.55, alpha) if damage > 0 else (0.4, 0.4, 0.4, alpha)  ))
-        cr.move_to(dmg_block_x, line2_y)
-        cr.show_text(dmg_text)
+        self.draw_cached_text(
+            cr, dmg_block_x, line2_y, dmg_text, dr, dg, db,
+            alpha=alpha, font_size=self.STAT_FONT_SIZE,
+        )
 
         # Ship name on the left of line 2
         ship_name = self._entity_ship_name.get(entity_id, "")
@@ -611,38 +619,33 @@ class TeamRosterLayer(Layer):
 
             cx += icon_size + 1
 
-            # Label
-            cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-            cr.set_font_size(font_size)
-
+            # Label — cached + halo'd. ~37k draw sites per render otherwise.
             label = ""
+            lr, lg, lb, la = 0.9, 0.9, 0.9, 0.8
             if state == "active":
-                cr.set_source_rgba(0.3, 1.0, 0.5, 1.0)  # green
+                lr, lg, lb, la = 0.3, 1.0, 0.5, 1.0
                 label = _fmt_seconds(seconds)
             elif state == "cooldown":
-                cr.set_source_rgba(0.6, 0.6, 0.6, 0.8)  # gray
+                lr, lg, lb, la = 0.6, 0.6, 0.6, 0.8
                 label = _fmt_seconds(seconds)
             elif state == "ready":
                 if remaining == -2:
-                    # Time-based: show remaining capacity as seconds
-                    cr.set_source_rgba(0.9, 0.9, 0.9, 0.8)  # white
                     label = _fmt_seconds(seconds) if seconds > 0 else ""
                 elif remaining == -1:
-                    # Unlimited charges — no label needed
                     label = ""
                 elif remaining > 0:
-                    cr.set_source_rgba(0.9, 0.9, 0.9, 0.8)  # white
                     label = str(remaining)
                 else:
-                    # 0 charges left
                     label = "0"
-                    cr.set_source_rgba(0.5, 0.5, 0.5, 0.6)
+                    lr, lg, lb, la = 0.5, 0.5, 0.5, 0.6
 
             if label:
-                ext = cr.text_extents(label)
-                cr.move_to(cx, y)
-                cr.show_text(label)
-                cx += ext.width + gap
+                _, label_w, _ = Layer.get_cached_text(cr, label, font_size, True, lr, lg, lb)
+                self.draw_cached_text(
+                    cr, cx, y, label, lr, lg, lb,
+                    alpha=la, font_size=font_size, bold=True,
+                )
+                cx += label_w + gap
             else:
                 cx += gap
 
