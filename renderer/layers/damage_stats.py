@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import cairo
 
-from renderer.layers.base import FONT_FAMILY, Layer, SingleRenderContext
+from renderer.layers.base import Layer, SingleRenderContext
 
 # damage_param → short display label
 _CATEGORY_MAP: dict[str, str] = {
@@ -176,49 +176,45 @@ class DamageStatsLayer(Layer):
                 cat_values[cat] = cat_values.get(cat, 0.0) + dmg
             total = sum(cat_values.values())
 
-            # Header row: "DMG" left, total right
-            cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-            cr.set_font_size(header_font)
-
-            # Shadow
-            cr.set_source_rgba(0, 0, 0, 0.9)
-            cr.move_to(x_left + 1, y + header_font + 1)
-            cr.show_text(_SECTION_LABELS[stat_type])
-            # Label
-            cr.set_source_rgb(sr, sg, sb)
-            cr.move_to(x_left, y + header_font)
-            cr.show_text(_SECTION_LABELS[stat_type])
+            # Header row: "DMG" left, total right.
+            # Cached + halo'd text (same visual as other panels). Section
+            # labels like "ENEMY"/"SPOT"/"AGRO" and subcategory names are
+            # constant across all frames so the cache is effectively free
+            # after the first render.
+            label_text = _SECTION_LABELS[stat_type]
+            self.draw_cached_text(
+                cr, x_left, y + header_font, label_text, sr, sg, sb,
+                alpha=1.0, font_size=header_font, bold=True,
+            )
 
             # Total value (right-aligned)
             total_text = _fmt(total)
-            ext = cr.text_extents(total_text)
-            cr.set_source_rgba(0, 0, 0, 0.9)
-            cr.move_to(x_right - ext.width + 1, y + header_font + 1)
-            cr.show_text(total_text)
-            cr.set_source_rgb(sr, sg, sb)
-            cr.move_to(x_right - ext.width, y + header_font)
-            cr.show_text(total_text)
+            _, tot_w, _ = Layer.get_cached_text(cr, total_text, header_font, True, sr, sg, sb)
+            self.draw_cached_text(
+                cr, x_right - tot_w, y + header_font, total_text, sr, sg, sb,
+                alpha=1.0, font_size=header_font, bold=True,
+            )
             y += row_h
 
             # Subcategory rows (only for damage dealt)
             if stat_type == "ENEMY" and len(cats) > 1:
-                cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-                cr.set_font_size(sub_font)
-
                 for cat_label in cats:
                     cat_dmg = cat_values.get(cat_label, 0.0)
 
                     # Category name (indented, dimmed)
-                    cr.set_source_rgba(0.65, 0.65, 0.65, 0.9)
-                    cr.move_to(x_left + indent, y + sub_font)
-                    cr.show_text(cat_label)
+                    self.draw_cached_text(
+                        cr, x_left + indent, y + sub_font, cat_label,
+                        0.65, 0.65, 0.65,
+                        alpha=0.9, font_size=sub_font, bold=False,
+                    )
 
                     # Value (right-aligned, section color)
                     val_text = _fmt(cat_dmg)
-                    ext = cr.text_extents(val_text)
-                    cr.set_source_rgb(sr, sg, sb)
-                    cr.move_to(x_right - ext.width, y + sub_font)
-                    cr.show_text(val_text)
+                    _, val_w, _ = Layer.get_cached_text(cr, val_text, sub_font, False, sr, sg, sb)
+                    self.draw_cached_text(
+                        cr, x_right - val_w, y + sub_font, val_text, sr, sg, sb,
+                        alpha=1.0, font_size=sub_font, bold=False,
+                    )
                     y += row_h
 
             y += section_gap

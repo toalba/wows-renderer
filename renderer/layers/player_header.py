@@ -10,7 +10,7 @@ from pathlib import Path
 import cairo
 
 from renderer.assets import get_ship_display_name, load_ship_consumables
-from renderer.layers.base import FONT_FAMILY, Layer, SingleRenderContext
+from renderer.layers.base import Layer, SingleRenderContext
 
 
 def _hp_color(fraction: float) -> tuple[float, float, float]:
@@ -153,20 +153,24 @@ class PlayerHeaderLayer(Layer):
 
         x_right = x_left + max_w
 
-        # Measure ship name + HP text width to size the silhouette
-        cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        cr.set_font_size(ship_name_font)
+        # Measure ship name + HP text width to size the silhouette.
+        # Using cached-text infrastructure for both sizing AND drawing — text
+        # like the ship name is constant across all 889 frames, so the cache
+        # amortizes away the cairo text-path work entirely.
         name_text = self._ship_name.upper() if self._ship_name else ""
-        name_ext = cr.text_extents(name_text)
+        _, name_w, _ = Layer.get_cached_text(
+            cr, name_text, ship_name_font, True, 0.85, 0.85, 0.85,
+        ) if name_text else (None, 0.0, 0.0)
 
         hp_str = f"{int(hp):,}".replace(",", " ")
         max_hp_str = f"{int(max_hp):,}".replace(",", " ")
         hp_text = f"{hp_str}/{max_hp_str}"
-        cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-        cr.set_font_size(hp_font)
-        hp_ext = cr.text_extents(hp_text)
+        hp_r, hp_g, hp_b = _hp_color(fraction)
+        _, hp_w, _ = Layer.get_cached_text(
+            cr, hp_text, hp_font, False, hp_r, hp_g, hp_b,
+        )
 
-        left_text_w = name_ext.x_advance + 6 * s + hp_ext.x_advance
+        left_text_w = name_w + 6 * s + hp_w
 
         # Silhouette — left-aligned, scaled to match the ship name + HP width
         sil_y = y_top + pad * 0.5
@@ -216,27 +220,19 @@ class PlayerHeaderLayer(Layer):
 
         # Ship name
         if self._ship_name:
-            cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-            cr.set_font_size(ship_name_font)
-            cr.set_source_rgba(0, 0, 0, 0.8)
-            cr.move_to(tx + 1, text_y + 1)
-            cr.show_text(self._ship_name.upper())
-            cr.set_source_rgba(0.85, 0.85, 0.85, 1.0)
-            cr.move_to(tx, text_y)
-            cr.show_text(self._ship_name.upper())
-            tx += name_ext.x_advance + 6 * s
+            self.draw_cached_text(
+                cr, tx, text_y, self._ship_name.upper(),
+                0.85, 0.85, 0.85,
+                alpha=1.0, font_size=ship_name_font, bold=True,
+            )
+            tx += name_w + 6 * s
 
         # HP values (HP-colored)
-        hp_r, hp_g, hp_b = _hp_color(fraction)
-        cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
-        cr.set_font_size(hp_font)
-        cr.set_source_rgba(0, 0, 0, 0.8)
-        cr.move_to(tx + 1, text_y + 1)
-        cr.show_text(hp_text)
-        cr.set_source_rgb(hp_r, hp_g, hp_b)
-        cr.move_to(tx, text_y)
-        cr.show_text(hp_text)
-        tx += hp_ext.x_advance
+        self.draw_cached_text(
+            cr, tx, text_y, hp_text, hp_r, hp_g, hp_b,
+            alpha=1.0, font_size=hp_font, bold=False,
+        )
+        tx += hp_w
 
         # [CLAN] PlayerName (right-aligned, clamped to not overlap HP text)
         # Build full string to measure
@@ -245,35 +241,35 @@ class PlayerHeaderLayer(Layer):
             player_parts.append(f"[{self._clan_tag}] ")
         player_parts.append(self._player_name)
 
-        cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        cr.set_font_size(name_font)
-        full_text = "".join(player_parts)
-        full_ext = cr.text_extents(full_text)
-        px = max(tx + 4 * s, x_right - full_ext.width)
+        # Right-align using pre-cached widths
+        name_r, name_g, name_b = (0.95, 0.95, 0.95)
+        if self.ctx.division_mates:
+            dr, dg, db, _ = self.ctx.config.division_color
+            name_r, name_g, name_b = dr, dg, db
+        _, player_w, _ = Layer.get_cached_text(
+            cr, self._player_name, name_font, True, name_r, name_g, name_b,
+        )
+        tag_w = 0.0
+        tag_text = ""
+        if self._clan_tag:
+            tag_text = f"[{self._clan_tag}] "
+            cr_, cg_, cb_ = self._clan_color
+            _, tag_w, _ = Layer.get_cached_text(cr, tag_text, clan_font, True, cr_, cg_, cb_)
+        full_w = tag_w + player_w
+        px = max(tx + 4 * s, x_right - full_w)
 
         if self._clan_tag:
-            cr.set_font_size(clan_font)
-            tag_text = f"[{self._clan_tag}] "
-            cr.set_source_rgba(0, 0, 0, 0.8)
-            cr.move_to(px + 1, text_y + 1)
-            cr.show_text(tag_text)
-            cr.set_source_rgba(*self._clan_color, 1.0)
-            cr.move_to(px, text_y)
-            cr.show_text(tag_text)
-            tag_ext = cr.text_extents(tag_text)
-            px += tag_ext.x_advance
+            self.draw_cached_text(
+                cr, px, text_y, tag_text,
+                self._clan_color[0], self._clan_color[1], self._clan_color[2],
+                alpha=1.0, font_size=clan_font, bold=True,
+            )
+            px += tag_w
 
-        cr.set_font_size(name_font)
-        cr.set_source_rgba(0, 0, 0, 0.8)
-        cr.move_to(px + 1, text_y + 1)
-        cr.show_text(self._player_name)
-        if self.ctx.division_mates:
-            dr, dg, db, da = self.ctx.config.division_color
-            cr.set_source_rgba(dr, dg, db, da)
-        else:
-            cr.set_source_rgba(0.95, 0.95, 0.95, 1.0)
-        cr.move_to(px, text_y)
-        cr.show_text(self._player_name)
+        self.draw_cached_text(
+            cr, px, text_y, self._player_name, name_r, name_g, name_b,
+            alpha=1.0, font_size=name_font, bold=True,
+        )
 
         cr.restore()
 
