@@ -173,3 +173,119 @@ def render_replay(
 
     game_type = replay.meta.get("gameType", "Unknown")
     return output_path, replay.duration, timings, replay.game_version, len(replay.players), game_type, build_urls
+
+
+def render_dual_replay(
+    replay_a_path: str,
+    replay_b_path: str,
+    output_path: str,
+    gamedata_path: str,
+    progress_queue: Queue | None = None,
+    *,
+    speed: float = 20.0,
+    fps: int = 20,
+    minimap_size: int = 1080,
+    panel_width: int = 420,
+) -> tuple[str, float, dict[str, float], str, int, str, list]:
+    """Dual-perspective merged render of two replays from the same match.
+
+    Returns the same tuple shape as render_replay so the cog handler can
+    unpack uniformly. build_urls is always empty (no self-player in the
+    merged/neutral-observer view).
+    """
+    from pathlib import Path
+    from time import perf_counter
+
+    from wows_replay_parser import parse_replay
+    from wows_replay_parser.merge import merge_replays
+
+    from renderer.config import RenderConfig
+    from renderer.core import DualMinimapRenderer
+    from renderer.gamedata_cache import VersionedGamedata, resolve_for_replay
+    from renderer.layers.aircraft import AircraftLayer
+    from renderer.layers.capture_points import CapturePointLayer
+    from renderer.layers.consumables import ConsumableLayer
+    from renderer.layers.health_bars import HealthBarLayer
+    from renderer.layers.hud import HudLayer
+    from renderer.layers.killfeed import KillfeedLayer
+    from renderer.layers.map_bg import MapBackgroundLayer
+    from renderer.layers.projectiles import ProjectileLayer
+    from renderer.layers.ships import ShipLayer
+    from renderer.layers.smoke import SmokeLayer
+    from renderer.layers.team_roster import TeamRosterLayer
+    from renderer.layers.trails import TrailLayer
+    from renderer.layers.weather import WeatherLayer
+
+    timings: dict[str, float] = {}
+    gamedata_repo = Path(gamedata_path).parent
+
+    log.info("worker: dual start replay_a=%s replay_b=%s",
+             Path(replay_a_path).name, Path(replay_b_path).name)
+    if progress_queue:
+        progress_queue.put(("status", "Parsing replays..."))
+
+    # Both replays belong to the same match → identical client build → same cache.
+    t0 = perf_counter()
+    try:
+        vgd = resolve_for_replay(replay_a_path, gamedata_repo)
+    except RuntimeError:
+        vgd = VersionedGamedata.from_gamedata_path(Path(gamedata_path))
+    timings["resolve"] = perf_counter() - t0
+
+    t1 = perf_counter()
+    replay_a = parse_replay(replay_a_path, str(vgd.entity_defs_path))
+    replay_b = parse_replay(replay_b_path, str(vgd.entity_defs_path))
+    merged = merge_replays(replay_a, replay_b)
+    timings["parse"] = perf_counter() - t1
+    log.info("worker: parsed+merged in %.2fs (%d players, map=%s)",
+             timings["parse"], len(merged.players), merged.map_name)
+
+    if progress_queue:
+        progress_queue.put(("status", "Rendering... 0%"))
+
+    config = RenderConfig(
+        gamedata_path=vgd.version_dir / "data",
+        versioned_gamedata=vgd,
+        speed=speed,
+        fps=fps,
+        minimap_size=minimap_size,
+        panel_width=panel_width,
+    )
+    renderer = DualMinimapRenderer(config, replay=merged)
+
+    # Dual layer set — no self-centric layers (player_header, damage_stats,
+    # ribbons, right_panel). Killfeed stays (server-authoritative). Trails
+    # are included because the neutral-observer view benefits from movement
+    # history of both teams.
+    for layer in [
+        MapBackgroundLayer(), TeamRosterLayer(), CapturePointLayer(),
+        WeatherLayer(), SmokeLayer(), ProjectileLayer(), AircraftLayer(),
+        TrailLayer(), ShipLayer(), HealthBarLayer(), ConsumableLayer(),
+        KillfeedLayer(), HudLayer(),
+    ]:
+        renderer.add_layer(layer)
+
+    def on_progress(current: int, total: int) -> None:
+        if progress_queue and (current % 50 == 0 or current == total):
+            progress_queue.put((current, total))
+
+    log.info("worker: dual entering render loop")
+    renderer.render(merged, Path(output_path), progress_callback=on_progress)
+    log.info(
+        "worker: dual render loop finished (render=%.2fs encode=%.2fs frames=%d)",
+        renderer.timings.get("render", 0.0),
+        renderer.timings.get("encode", 0.0),
+        int(renderer.timings.get("frames", 0.0)),
+    )
+
+    timings["render"] = renderer.timings.get("render", 0.0)
+    timings["encode"] = renderer.timings.get("encode", 0.0)
+    timings["_frames"] = renderer.timings.get("frames", 0.0)
+    timings["setup"] = renderer.timings.get("setup", 0.0)
+    timings["layer_init"] = renderer.timings.get("layer_init", {})
+
+    # Dual mode: no self-player → no build URLs.
+    timings["build_urls"] = 0.0
+
+    game_type = merged.meta.get("gameType", "Unknown") if hasattr(merged, "meta") else "Unknown"
+    return output_path, merged.duration, timings, merged.game_version, len(merged.players), game_type, []

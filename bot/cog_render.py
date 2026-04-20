@@ -19,7 +19,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from bot.config import BotConfig
-from bot.worker import render_replay
+from bot.worker import render_dual_replay, render_replay
 
 log = logging.getLogger(__name__)
 
@@ -646,5 +646,183 @@ class RenderCog(commands.Cog):
                 )
         else:
             log.exception("Unhandled error in /render_batch", exc_info=error)
+            if not interaction.response.is_done():
+                await interaction.response.send_message("Something went wrong.", ephemeral=True)
+
+    @app_commands.command(
+        name="render_dual",
+        description="Merge two replays from the same match into a single neutral-observer video",
+    )
+    @app_commands.describe(
+        replay1="First replay (.wowsreplay)",
+        replay2="Second replay (.wowsreplay, must be from the same match)",
+    )
+    @app_commands.checks.dynamic_cooldown(_batch_cooldown)
+    async def render_dual(
+        self,
+        interaction: discord.Interaction,
+        replay1: discord.Attachment,
+        replay2: discord.Attachment,
+    ) -> None:
+        # Guild authorization gate (same allowlist as /render_batch).
+        if interaction.guild_id is None or interaction.guild_id not in self.config.authorized_guild_ids:
+            await interaction.response.send_message(
+                "This command isn't available in this server.", ephemeral=True,
+            )
+            return
+
+        # Validate both attachments
+        max_bytes = self.config.max_upload_mb * 1024 * 1024
+        for a in (replay1, replay2):
+            if not a.filename.endswith(".wowsreplay"):
+                await interaction.response.send_message(
+                    f"`{a.filename}`: not a .wowsreplay file.", ephemeral=True,
+                )
+                return
+            if a.size > max_bytes:
+                await interaction.response.send_message(
+                    f"`{a.filename}`: {a.size / 1024 / 1024:.1f} MB > {self.config.max_upload_mb} MB limit.",
+                    ephemeral=True,
+                )
+                return
+
+        log.info(
+            "/render_dual start: user=%s guild=%s replay_a=%s replay_b=%s",
+            interaction.user.id, interaction.guild_id,
+            replay1.filename, replay2.filename,
+        )
+        await interaction.response.defer()
+
+        tmp_dir = tempfile.mkdtemp(prefix="wows_dual_")
+        cfg = self.config
+        try:
+            path_a = Path(tmp_dir) / Path(replay1.filename).name
+            path_b = Path(tmp_dir) / f"b_{Path(replay2.filename).name}"
+            output_path = Path(tmp_dir) / "dual.mp4"
+
+            await interaction.edit_original_response(content="Downloading replays...")
+            await asyncio.gather(
+                replay1.save(path_a),
+                replay2.save(path_b),
+            )
+
+            await interaction.edit_original_response(content="Parsing + merging...")
+            t_start = time.monotonic()
+            progress_queue = self._manager.Queue()
+            render_call = functools.partial(
+                render_dual_replay,
+                str(path_a),
+                str(path_b),
+                str(output_path),
+                str(cfg.gamedata_path),
+                progress_queue,
+                speed=cfg.render_speed,
+                fps=cfg.render_fps,
+                minimap_size=cfg.minimap_size,
+                panel_width=cfg.panel_width,
+            )
+            pool, future = await self._submit_render(render_call)
+
+            # Poll with the same cadence as /render
+            last_msg = "Parsing + merging..."
+            deadline = asyncio.get_event_loop().time() + self.config.render_timeout
+            while not future.done():
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    future.cancel()
+                    raise TimeoutError
+                await asyncio.sleep(min(2, remaining))
+                new_msg = last_msg
+                while not progress_queue.empty():
+                    try:
+                        msg = progress_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    if isinstance(msg, tuple) and msg[0] == "status":
+                        new_msg = msg[1]
+                    else:
+                        current, total = msg
+                        pct = int(current / total * 100) if total else 0
+                        new_msg = f"Rendering... {pct}%"
+                if new_msg != last_msg:
+                    last_msg = new_msg
+                    await interaction.edit_original_response(content=new_msg)
+
+            _, replay_duration, timings, game_version, num_players, game_type, _ = await future
+            elapsed = time.monotonic() - t_start
+
+            file_size = output_path.stat().st_size
+            log.info(
+                "Dual render done (%.1fs); uploading %.1fMB",
+                elapsed, file_size / 1024 / 1024,
+            )
+            mins, secs = divmod(int(replay_duration), 60)
+            if file_size > DISCORD_ATTACHMENT_LIMIT_MB * 1024 * 1024:
+                await asyncio.wait_for(
+                    interaction.edit_original_response(
+                        content=(
+                            f"Video is too large for Discord "
+                            f"({file_size / 1024 / 1024:.1f} MB > {DISCORD_ATTACHMENT_LIMIT_MB} MB limit)."
+                        ),
+                    ),
+                    timeout=30,
+                )
+            else:
+                await asyncio.wait_for(
+                    interaction.edit_original_response(
+                        content=(
+                            f"Dual-perspective render — both teams visible.\n"
+                            f"{game_type} · {mins}:{secs:02d} · {num_players} players · "
+                            f"v{game_version} · Rendered in {elapsed:.1f}s · "
+                            f"{file_size / 1024 / 1024:.1f} MB"
+                        ),
+                        attachments=[discord.File(str(output_path), filename="dual_render.mp4")],
+                    ),
+                    timeout=120,
+                )
+            log.info(
+                "[TIMING-DUAL] resolve=%.2fs parse=%.2fs render=%.2fs encode=%.2fs total=%.1fs frames=%d",
+                timings.get("resolve", 0), timings.get("parse", 0),
+                timings.get("render", 0), timings.get("encode", 0),
+                elapsed, int(timings.get("_frames", 0)),
+            )
+        except TimeoutError:
+            await interaction.edit_original_response(
+                content=f"Render timed out after {self.config.render_timeout}s.",
+            )
+        except BrokenProcessPool:
+            log.exception("Dual render worker died")
+            await self._replace_broken_pool(pool)
+            await interaction.edit_original_response(
+                content="Render worker crashed (likely out of memory). Please try again.",
+            )
+        except Exception as e:  # noqa: BLE001
+            log.exception("Dual render failed")
+            # merge_replays raises if the two replays aren't from the same match
+            msg = str(e) or type(e).__name__
+            if "arenaUniqueId" in msg or "map_name" in msg or "merge" in msg.lower():
+                await interaction.edit_original_response(
+                    content=f"Cannot merge — the two replays don't appear to be from the same match: {msg}",
+                )
+            else:
+                await interaction.edit_original_response(
+                    content="Render failed. Check the replay files and try again.",
+                )
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    @render_dual.error
+    async def render_dual_error(
+        self, interaction: discord.Interaction, error: app_commands.AppCommandError,
+    ) -> None:
+        if isinstance(error, app_commands.CommandOnCooldown):
+            retry_min = error.retry_after / 60
+            if not interaction.response.is_done():
+                await interaction.response.send_message(
+                    f"Dual render is on cooldown — try again in {retry_min:.1f} min.",
+                    ephemeral=True,
+                )
+        else:
+            log.exception("Unhandled error in /render_dual", exc_info=error)
             if not interaction.response.is_done():
                 await interaction.response.send_message("Something went wrong.", ephemeral=True)

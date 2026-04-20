@@ -22,6 +22,13 @@ def main() -> None:
 
     async def setup_hook() -> None:
         await bot.add_cog(RenderCog(bot, config))
+        # Per-guild sync for authorized guilds → commands appear instantly
+        # (global sync can take up to ~1 hour to propagate). The gated
+        # commands (/render_batch, /render_dual) are guild-only anyway.
+        for gid in config.authorized_guild_ids:
+            guild = discord.Object(id=gid)
+            bot.tree.copy_global_to(guild=guild)
+            await bot.tree.sync(guild=guild)
         await bot.tree.sync()
 
         # Populate gamedata caches in the background so the bot starts immediately
