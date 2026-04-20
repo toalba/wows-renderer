@@ -23,6 +23,7 @@ class BotConfig:
     render_fps: int = 20
     minimap_size: int = 1080
     panel_width: int = 420
+    authorized_guild_ids: frozenset[int] = frozenset()
 
     @classmethod
     def from_env(cls) -> BotConfig:
@@ -31,6 +32,10 @@ class BotConfig:
         if not token:
             raise RuntimeError("DISCORD_TOKEN environment variable is required")
         cache_root_str = os.environ.get("GAMEDATA_CACHE_DIR")
+        guild_ids_str = os.environ.get("AUTHORIZED_GUILD_IDS", "").strip()
+        authorized_guild_ids = frozenset(
+            int(s) for s in (part.strip() for part in guild_ids_str.split(",")) if s
+        )
         return cls(
             discord_token=token,
             gamedata_path=Path(os.environ.get("GAMEDATA_PATH", "wows-gamedata/data")).resolve(),
@@ -41,4 +46,5 @@ class BotConfig:
             render_max_tasks_per_child=int(os.environ.get("RENDER_MAX_TASKS_PER_CHILD", "4")),
             render_timeout=int(os.environ.get("RENDER_TIMEOUT", "120")),
             cooldown_seconds=int(os.environ.get("COOLDOWN_SECONDS", "60")),
+            authorized_guild_ids=authorized_guild_ids,
         )

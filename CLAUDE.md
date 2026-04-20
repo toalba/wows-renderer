@@ -616,9 +616,11 @@ Unscheduled ideas — kept as a reference for future work.
 | `GAMEDATA_REPO_PATH` | `wows-gamedata` | Path to wows-gamedata git repo (for version cache) |
 | `GAMEDATA_CACHE_DIR` | `~/.cache/wows-gamedata` | Override cache directory |
 | `MAX_WORKERS` | `2` | Concurrent render processes |
+| `RENDER_MAX_TASKS_PER_CHILD` | `4` | Recycle each worker after N renders (bounds cairo/ffmpeg memory growth) |
 | `RENDER_TIMEOUT` | `120` | Seconds before render is cancelled |
 | `COOLDOWN_SECONDS` | `60` | Per-user rate limit |
 | `MAX_UPLOAD_MB` | `50` | Max replay file size |
+| `AUTHORIZED_GUILD_IDS` | *(empty)* | Comma-separated guild IDs allowed to use `/render_batch`; empty disables the command globally |
 
 ### Slash Command Flow
 1. `/render` + `.wowsreplay` attachment
@@ -628,6 +630,15 @@ Unscheduled ideas — kept as a reference for future work.
 5. Send mp4 with game type, match duration, render time, file size
 6. Log per-phase timing breakdown (parse/render/encode/upload)
 7. Cleanup temp dir
+
+### `/render_batch` — bulk render (authorized guilds only)
+Up to 10 replays in one invocation, gated by `AUTHORIZED_GUILD_IDS`.
+Per-user 10-min cooldown. All replays dispatched to the shared pool
+(throttled by `MAX_WORKERS`); videos stream back as individual
+follow-up messages as each render completes; a final summary embed
+lists per-replay status, match type, duration, and render time.
+Failures (bad file, worker crash, oversize output) don't abort the
+batch — they're marked ❌ in the summary and other replays continue.
 
 ## Configurable Parameters (RenderConfig)
 
