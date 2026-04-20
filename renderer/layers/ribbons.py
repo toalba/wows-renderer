@@ -10,7 +10,7 @@ from pathlib import Path
 
 import cairo
 
-from renderer.layers.base import FONT_FAMILY, Layer, SingleRenderContext
+from renderer.layers.base import Layer, SingleRenderContext
 
 # Ribbon groups: (parent_id, [sub_ids])
 # Parent count = sum of children when children exist.
@@ -223,33 +223,27 @@ class RibbonLayer(Layer):
             cr.paint()
             cr.restore()
         else:
-            # Fallback rectangle
+            # Fallback rectangle with cached label
             label = self._labels.get(rid, "?")
             draw_w = height * 2.5
             cr.set_source_rgba(0.3, 0.3, 0.3, 0.6)
             cr.rectangle(x, y, draw_w, height)
             cr.fill()
-            cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-            cr.set_font_size(8 * s)
-            cr.set_source_rgba(0.9, 0.9, 0.9, 1.0)
-            ext = cr.text_extents(label)
-            cr.move_to(x + (draw_w - ext.width) / 2, y + height / 2 + ext.height / 2)
-            cr.show_text(label)
+            _, lw, lh = Layer.get_cached_text(cr, label, 8 * s, True, 0.9, 0.9, 0.9)
+            self.draw_cached_text(
+                cr, x + (draw_w - lw) / 2, y + height / 2 + lh / 2, label,
+                0.9, 0.9, 0.9, alpha=1.0, font_size=8 * s, bold=True,
+            )
 
         # Count badge (bottom-right)
         badge_text = f"×{count}"
         font_size = self.COUNT_FONT_SIZE * s
-        cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-        cr.set_font_size(font_size)
-        ext = cr.text_extents(badge_text)
-        bx = x + draw_w - ext.width - 2
+        _, bw, _ = Layer.get_cached_text(cr, badge_text, font_size, True, 1.0, 1.0, 1.0)
+        bx = x + draw_w - bw - 2
         by = y + height - 2
-        # Text shadow for readability (no background box)
-        cr.set_source_rgba(0, 0, 0, 0.9)
-        cr.move_to(bx + 1, by + 1)
-        cr.show_text(badge_text)
-        cr.set_source_rgb(1, 1, 1)
-        cr.move_to(bx, by)
-        cr.show_text(badge_text)
+        self.draw_cached_text(
+            cr, bx, by, badge_text, 1.0, 1.0, 1.0,
+            alpha=1.0, font_size=font_size, bold=True,
+        )
 
         return x + draw_w
