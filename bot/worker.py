@@ -4,7 +4,10 @@ All imports are inside the function body so it stays picklable.
 """
 from __future__ import annotations
 
+import logging
 from multiprocessing import Queue
+
+log = logging.getLogger(__name__)
 
 # Preset names — used by cog as app_commands.Choice values
 PRESETS = ["full", "map", "playerdata"]
@@ -59,6 +62,7 @@ def render_replay(
     timings: dict[str, float] = {}
     gamedata_repo = Path(gamedata_path).parent  # gamedata_path is repo/data, parent is repo
 
+    log.info("worker: start replay=%s preset=%s", Path(replay_path).name, preset)
     if progress_queue:
         progress_queue.put(("status", "Parsing replay..."))
 
@@ -70,11 +74,13 @@ def render_replay(
         # Fallback: cold-load from provided gamedata directory
         vgd = VersionedGamedata.from_gamedata_path(Path(gamedata_path))
     timings["resolve"] = perf_counter() - t0
+    log.info("worker: resolved gamedata in %.2fs", timings["resolve"])
 
     # Phase 1: Parse replay
     t1 = perf_counter()
     replay = parse_replay(replay_path, str(vgd.entity_defs_path))
     timings["parse"] = perf_counter() - t1
+    log.info("worker: parsed replay in %.2fs (%d players)", timings["parse"], len(replay.players))
 
     if progress_queue:
         progress_queue.put(("status", "Rendering... 0%"))
@@ -129,7 +135,14 @@ def render_replay(
             progress_queue.put((current, total))
 
     # Phase 2+3: Render + Encode (timed inside MinimapRenderer.render)
+    log.info("worker: entering render loop")
     renderer.render(replay, Path(output_path), progress_callback=on_progress)
+    log.info(
+        "worker: render loop finished (render=%.2fs encode=%.2fs frames=%d)",
+        renderer.timings.get("render", 0.0),
+        renderer.timings.get("encode", 0.0),
+        int(renderer.timings.get("frames", 0.0)),
+    )
 
     timings["render"] = renderer.timings.get("render", 0.0)
     timings["encode"] = renderer.timings.get("encode", 0.0)
@@ -144,8 +157,9 @@ def render_replay(
         from renderer.build_export import generate_all_build_urls
         build_urls = generate_all_build_urls(replay, vgd)
     except Exception:
-        pass  # Non-critical — don't fail render if build export breaks
+        log.exception("worker: build_urls generation failed")
     timings["build_urls"] = perf_counter() - t_builds
+    log.info("worker: build_urls done in %.2fs (%d entries)", timings["build_urls"], len(build_urls))
 
     game_type = replay.meta.get("gameType", "Unknown")
     return output_path, replay.duration, timings, replay.game_version, len(replay.players), game_type, build_urls

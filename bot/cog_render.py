@@ -132,6 +132,11 @@ class RenderCog(commands.Cog):
             )
             return
 
+        log.info(
+            "/render start: user=%s guild=%s replay=%s size=%.1fMB preset=%s",
+            interaction.user.id, interaction.guild_id,
+            replay.filename, replay.size / 1024 / 1024, preset_value,
+        )
         await interaction.response.defer()
 
         # Temp files
@@ -451,6 +456,11 @@ class RenderCog(commands.Cog):
             )
             return
 
+        log.info(
+            "/render_batch start: user=%s guild=%s valid=%d rejected=%d preset=%s",
+            interaction.user.id, interaction.guild_id,
+            len(valid), len(rejected), preset_value,
+        )
         await interaction.response.defer()
 
         batch_tmp = tempfile.mkdtemp(prefix="wows_batch_")
