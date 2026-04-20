@@ -89,6 +89,22 @@ class FFmpegPipe:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
+        # ffmpeg writes progress/status to stderr continuously. If we don't
+        # drain it, the kernel pipe buffer (~64 KB) fills and ffmpeg blocks
+        # on write, unable to exit — the whole worker then deadlocks in
+        # self.proc.wait() below. Drain on a daemon thread so stderr never
+        # stalls the encoder.
+        self._stderr_chunks: list[bytes] = []
+        self._stderr_thread = threading.Thread(
+            target=self._drain_stderr, daemon=True,
+        )
+        self._stderr_thread.start()
+
+    def _drain_stderr(self) -> None:
+        if self.proc.stderr is None:
+            return
+        for line in iter(self.proc.stderr.readline, b""):
+            self._stderr_chunks.append(line)
 
     def write_frame(self, frame_data: bytes | memoryview) -> None:
         """Write one raw BGRA frame to ffmpeg.
@@ -104,8 +120,11 @@ class FFmpegPipe:
         if self.proc.stdin:
             self.proc.stdin.close()
         self.proc.wait()
+        # Wait for the stderr drainer to finish reading all output (the pipe
+        # closes when ffmpeg exits, so this should return very quickly).
+        self._stderr_thread.join(timeout=10)
         if self.proc.returncode != 0:
-            stderr = self.proc.stderr.read() if self.proc.stderr else b""
+            stderr = b"".join(self._stderr_chunks)
             raise RuntimeError(
                 f"ffmpeg exited with code {self.proc.returncode}: "
                 f"{stderr.decode(errors='replace')}"
