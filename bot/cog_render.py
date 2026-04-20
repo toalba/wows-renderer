@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from multiprocessing import Manager
 from pathlib import Path
 
@@ -26,8 +27,24 @@ class RenderCog(commands.Cog):
     def __init__(self, bot: commands.Bot, config: BotConfig) -> None:
         self.bot = bot
         self.config = config
-        self._pool = ProcessPoolExecutor(max_workers=config.max_workers)
+        self._pool = self._make_pool()
+        self._pool_lock = asyncio.Lock()
         self._manager = Manager()
+
+    def _make_pool(self) -> ProcessPoolExecutor:
+        return ProcessPoolExecutor(
+            max_workers=self.config.max_workers,
+            max_tasks_per_child=self.config.render_max_tasks_per_child,
+        )
+
+    async def _replace_broken_pool(self, broken: ProcessPoolExecutor) -> ProcessPoolExecutor:
+        async with self._pool_lock:
+            if self._pool is broken:
+                log.warning("ProcessPool broken, rebuilding (max_workers=%d, max_tasks_per_child=%d)",
+                            self.config.max_workers, self.config.render_max_tasks_per_child)
+                broken.shutdown(wait=False, cancel_futures=True)
+                self._pool = self._make_pool()
+            return self._pool
 
     async def cog_unload(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)
@@ -74,6 +91,7 @@ class RenderCog(commands.Cog):
         replay_path = Path(tmp_dir) / safe_name
         output_path = Path(tmp_dir) / "minimap.mp4"
 
+        pool = self._pool  # hoisted so the outer BrokenProcessPool handler can always rebuild
         try:
             # Download replay
             await replay.save(replay_path)
@@ -84,21 +102,23 @@ class RenderCog(commands.Cog):
             progress_queue = self._manager.Queue()
             loop = asyncio.get_running_loop()
             cfg = self.config
-            future = loop.run_in_executor(
-                self._pool,
-                functools.partial(
-                    render_replay,
-                    str(replay_path),
-                    str(output_path),
-                    str(cfg.gamedata_path),
-                    progress_queue,
-                    preset=preset_value,
-                    speed=cfg.render_speed,
-                    fps=cfg.render_fps,
-                    minimap_size=cfg.minimap_size,
-                    panel_width=cfg.panel_width,
-                ),
+            render_call = functools.partial(
+                render_replay,
+                str(replay_path),
+                str(output_path),
+                str(cfg.gamedata_path),
+                progress_queue,
+                preset=preset_value,
+                speed=cfg.render_speed,
+                fps=cfg.render_fps,
+                minimap_size=cfg.minimap_size,
+                panel_width=cfg.panel_width,
             )
+            try:
+                future = loop.run_in_executor(pool, render_call)
+            except BrokenProcessPool:
+                pool = await self._replace_broken_pool(pool)
+                future = loop.run_in_executor(pool, render_call)
 
             # Poll progress with timeout
             current = 0
@@ -221,6 +241,12 @@ class RenderCog(commands.Cog):
         except TimeoutError:
             await interaction.edit_original_response(
                 content=f"Render timed out after {self.config.render_timeout}s.",
+            )
+        except BrokenProcessPool:
+            log.exception("Render worker died for %s", replay.filename)
+            await self._replace_broken_pool(pool)
+            await interaction.edit_original_response(
+                content="Render worker crashed (likely out of memory). Please try again.",
             )
         except Exception:
             log.exception("Render failed for %s", replay.filename)

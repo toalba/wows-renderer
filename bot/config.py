@@ -16,6 +16,7 @@ class BotConfig:
     cache_root: Path | None = None  # None = ~/.cache/wows-gamedata/
     max_upload_mb: int = 50
     max_workers: int = 2
+    render_max_tasks_per_child: int = 4
     render_timeout: int = 120
     cooldown_seconds: int = 60
     render_speed: float = 20.0
@@ -37,6 +38,7 @@ class BotConfig:
             cache_root=Path(cache_root_str).resolve() if cache_root_str else None,
             max_upload_mb=int(os.environ.get("MAX_UPLOAD_MB", "50")),
             max_workers=int(os.environ.get("MAX_WORKERS", "2")),
+            render_max_tasks_per_child=int(os.environ.get("RENDER_MAX_TASKS_PER_CHILD", "4")),
             render_timeout=int(os.environ.get("RENDER_TIMEOUT", "120")),
             cooldown_seconds=int(os.environ.get("COOLDOWN_SECONDS", "60")),
         )
