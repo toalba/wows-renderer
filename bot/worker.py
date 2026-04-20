@@ -139,11 +139,13 @@ def render_replay(
 
     # Generate ShipBuilder build URLs for all players
     build_urls: list[tuple[str, str, int, str | None]] = []
+    t_builds = perf_counter()
     try:
         from renderer.build_export import generate_all_build_urls
         build_urls = generate_all_build_urls(replay, vgd)
     except Exception:
         pass  # Non-critical — don't fail render if build export breaks
+    timings["build_urls"] = perf_counter() - t_builds
 
     game_type = replay.meta.get("gameType", "Unknown")
     return output_path, replay.duration, timings, replay.game_version, len(replay.players), game_type, build_urls
