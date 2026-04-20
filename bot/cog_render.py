@@ -78,8 +78,13 @@ class RenderCog(commands.Cog):
     async def _replace_broken_pool(self, broken: ProcessPoolExecutor) -> ProcessPoolExecutor:
         async with self._pool_lock:
             if self._pool is broken:
-                log.warning("ProcessPool broken, rebuilding (max_workers=%d, max_tasks_per_child=%d)",
-                            self.config.max_workers, self.config.render_max_tasks_per_child)
+                log.warning(
+                    "ProcessPool broken, rebuilding (max_workers=%d, max_tasks_per_child=%s)",
+                    self.config.max_workers,
+                    self.config.render_max_tasks_per_child
+                    if self.config.render_max_tasks_per_child is not None
+                    else "unlimited",
+                )
                 broken.shutdown(wait=False, cancel_futures=True)
                 self._pool = self._make_pool()
             return self._pool

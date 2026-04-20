@@ -702,11 +702,19 @@ docker inspect --format '{{.State.Health.Status}}' wows-renderer-bot-1
 ```
 
 ### Resource limits
-`docker-compose.yml` caps the bot at **4 GB RAM / 2 CPU cores**. Cairo renders
-at 1080p can spike well past 1 GB on complex matches (notably long Soviet cruiser
-replays tripped the old 2 GB cap via the cgroup OOM killer), so the limit is
-generous. Reservation floor is 1 GB so the scheduler won't starve the bot under
-load. Adjust downward only if co-located with more containers on a smaller VPS.
+`docker-compose.yml` caps the bot at **4.5 GB RAM / 2 CPU cores** (4608 MiB —
+docker-compose needs integer values). Cairo renders at 1080p can spike well
+past 1 GB on complex matches (notably long Soviet cruiser replays tripped the
+old 2 GB cap via the cgroup OOM killer), so the limit is generous. Reservation
+floor is 1 GB so the scheduler won't starve the bot under load. Adjust
+downward only if co-located with more containers on a smaller VPS.
+
+`RENDER_MAX_TASKS_PER_CHILD` defaults to unset (no worker recycling). Setting
+it to any positive int forces Python's `multiprocessing` to use the **spawn**
+start method per the `ProcessPoolExecutor` docs — that re-imports every module
+and reloads the 15 MB GameParams pickle per worker lifecycle, adding ~5-10s of
+overhead per spawn on ARM. Only enable it if you've observed accumulated
+per-worker memory growth that pool recovery can't handle.
 
 ### Log rotation
 JSON-file driver with rolling window: **10 MB × 5 files = ~50 MB ceiling**.
