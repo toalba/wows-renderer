@@ -5,6 +5,10 @@ services:
       dockerfile: Dockerfile
     env_file: .env
     restart: unless-stopped
+    environment:
+      # Unbuffered stdout/stderr so worker (child-process) log lines are
+      # captured by `docker compose logs` as they happen, not at worker exit.
+      PYTHONUNBUFFERED: "1"
     volumes:
       - ./wows-gamedata:/app/wows-gamedata:ro
       - ./.git/modules/wows-gamedata:/app/.git/modules/wows-gamedata:ro

@@ -204,28 +204,42 @@ class RenderCog(commands.Cog):
             # Format durations
             replay_mins, replay_secs = divmod(int(replay_duration), 60)
 
-            # Send video (timed as upload phase)
+            # Send video (timed as upload phase). Wrap in wait_for so a hung
+            # Discord upload raises TimeoutError instead of silently eating
+            # the handler — we saw a production case where this call just
+            # never returned and the render vanished with no log trace.
             file_size = output_path.stat().st_size
+            log.info(
+                "Render done (%.1fs); uploading %.1fMB to Discord for %s",
+                elapsed, file_size / 1024 / 1024, replay.filename,
+            )
             t_upload_start = time.perf_counter()
             if file_size > DISCORD_ATTACHMENT_LIMIT_MB * 1024 * 1024:
-                await interaction.edit_original_response(
-                    content=(
-                        f"Video is too large for Discord "
-                        f"({file_size / 1024 / 1024:.1f} MB > {DISCORD_ATTACHMENT_LIMIT_MB} MB limit)."
+                await asyncio.wait_for(
+                    interaction.edit_original_response(
+                        content=(
+                            f"Video is too large for Discord "
+                            f"({file_size / 1024 / 1024:.1f} MB > {DISCORD_ATTACHMENT_LIMIT_MB} MB limit)."
+                        ),
                     ),
+                    timeout=30,
                 )
             else:
-                await interaction.edit_original_response(
-                    content=(
-                        f"Here's your minimap replay!\n"
-                        f"{game_type} · {replay_mins}:{replay_secs:02d} · "
-                        f"v{game_version} · "
-                        f"Rendered in {elapsed:.1f}s · "
-                        f"{file_size / 1024 / 1024:.1f} MB"
+                await asyncio.wait_for(
+                    interaction.edit_original_response(
+                        content=(
+                            f"Here's your minimap replay!\n"
+                            f"{game_type} · {replay_mins}:{replay_secs:02d} · "
+                            f"v{game_version} · "
+                            f"Rendered in {elapsed:.1f}s · "
+                            f"{file_size / 1024 / 1024:.1f} MB"
+                        ),
+                        attachments=[discord.File(str(output_path), filename="minimap.mp4")],
                     ),
-                    attachments=[discord.File(str(output_path), filename="minimap.mp4")],
+                    timeout=120,
                 )
             upload_time = time.perf_counter() - t_upload_start
+            log.info("Upload complete in %.1fs for %s", upload_time, replay.filename)
 
             # Send build links as follow-up embed
             if build_urls:
