@@ -88,6 +88,29 @@ class TeamRosterLayer(Layer):
                     self._cons_icons[type_id] = all_icons[icon_name]
                     break
 
+        # Pre-scale consumable icons to CONS_ICON_SIZE so the per-frame render
+        # path can do a direct blit (set_source_surface + paint_with_alpha)
+        # instead of cr.scale() + paint, which forces cairo to re-interpolate
+        # the source every call. Per-frame profile showed this single line
+        # dominated render time at 14 players × ~3 cons × 889 frames of
+        # repeated interpolation — ~2 s of 5 s team_roster cost.
+        self._cons_icons_scaled: dict[int, cairo.ImageSurface] = {}
+        _target = self.CONS_ICON_SIZE
+        for cons_id, src in self._cons_icons.items():
+            iw, ih = src.get_width(), src.get_height()
+            if iw <= 0 or ih <= 0:
+                continue
+            s = _target / max(iw, ih)
+            sw = max(1, round(iw * s))
+            sh = max(1, round(ih * s))
+            dst = cairo.ImageSurface(cairo.FORMAT_ARGB32, sw, sh)
+            dcr = cairo.Context(dst)
+            dcr.scale(s, s)
+            dcr.set_source_surface(src, 0, 0)
+            dcr.paint()
+            dst.flush()
+            self._cons_icons_scaled[cons_id] = dst
+
         # Build per-entity effective reload + initial charges lookup
         from wows_replay_parser.consumable_calc import SPECIES_INDEX
         ship_db = ctx.ship_db or {}
@@ -564,7 +587,7 @@ class TeamRosterLayer(Layer):
             if cx >= max_x:
                 break
 
-            icon = self._cons_icons.get(cons_id)
+            icon_scaled = self._cons_icons_scaled.get(cons_id)
 
             # Icon alpha/tint by state
             if state == "active":
@@ -576,16 +599,12 @@ class TeamRosterLayer(Layer):
             else:  # ready
                 icon_alpha = 0.7
 
-            # Draw icon
-            if icon:
-                iw, ih = icon.get_width(), icon.get_height()
-                scale = icon_size / max(iw, ih)
-                cr.save()
-                cr.translate(cx, y - icon_size)
-                cr.scale(scale, scale)
-                cr.set_source_surface(icon, 0, 0)
+            # Draw icon — pre-scaled to CONS_ICON_SIZE at init, so this is a
+            # straight blit. Avoids a cr.scale() + re-interpolation on every
+            # frame for every player's consumables.
+            if icon_scaled:
+                cr.set_source_surface(icon_scaled, cx, y - icon_size)
                 cr.paint_with_alpha(icon_alpha)
-                cr.restore()
 
                 if state == "active":
                     self._draw_pie_timer(cr, cx + icon_size / 2, y - icon_size / 2, icon_size / 2 - 1, seconds)
