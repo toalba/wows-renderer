@@ -24,17 +24,21 @@ services:
       start_period: 60s
       retries: 3
 
-    # Resource limits — cairo renders can spike RAM on high-res output.
+    # Resource limits — cairo renders can spike RAM on high-res output, and
+    # larger/longer replays (e.g. Chapaev matches) were hitting the 2G cap
+    # and triggering the cgroup OOM killer. VPS has 7.5G total with ~1G used
+    # by other containers, so 4G gives generous headroom for two concurrent
+    # renders plus the idle bot (~1.2G).
     # `deploy.resources` works in Compose v2.20+ (non-swarm); mem_limit/cpus
     # are the legacy equivalents kept for broader compatibility.
     deploy:
       resources:
         limits:
-          memory: 2G
+          memory: 4G
           cpus: "2.0"
         reservations:
-          memory: 512M
-    mem_limit: 2g
+          memory: 1G
+    mem_limit: 4g
     cpus: 2.0
 
     # Rolling logs: ~50 MB ceiling (10 MB × 5 files). Prevents disk fill from

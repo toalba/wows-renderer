@@ -702,10 +702,11 @@ docker inspect --format '{{.State.Health.Status}}' wows-renderer-bot-1
 ```
 
 ### Resource limits
-`docker-compose.yml` caps the bot at **2 GB RAM / 2 CPU cores**. Cairo renders
-at 1080p can briefly spike above 1 GB on complex matches — adjust via a
-compose override if your VPS has more headroom. Reservation floor is 512 MB
-so the scheduler won't starve the bot under load.
+`docker-compose.yml` caps the bot at **4 GB RAM / 2 CPU cores**. Cairo renders
+at 1080p can spike well past 1 GB on complex matches (notably long Soviet cruiser
+replays tripped the old 2 GB cap via the cgroup OOM killer), so the limit is
+generous. Reservation floor is 1 GB so the scheduler won't starve the bot under
+load. Adjust downward only if co-located with more containers on a smaller VPS.
 
 ### Log rotation
 JSON-file driver with rolling window: **10 MB × 5 files = ~50 MB ceiling**.
