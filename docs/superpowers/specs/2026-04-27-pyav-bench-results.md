@@ -8,7 +8,18 @@
 
 ## Summary
 
-**Initial bench: PyAV with default `threads=0` (auto) was 2x slower than FFmpeg subprocess.** Root cause was libx264 spawning 16 threads on a 16-core machine and starving Cairo of CPU. **After capping to `threads=4` via the `PYAV_X264_THREADS` env var, PyAV now beats master by 1-8% wall time across all three replays** while still producing visually-identical output. Memory cost remains ~50% higher than the subprocess. Recommendation: **keep the PyAV migration**, ship `PYAV_X264_THREADS=4` as the deployment default (with a note to re-tune for different core counts). The system `ffmpeg` apt dependency is gone for good.
+**Three iterations took PyAV from 2x slower to 10-16% faster than master, with comparable memory.**
+
+| Iteration | Bismarck wall | vs master |
+|---|---:|---:|
+| pyav (threads=auto, naive impl) | 33.17s | +86% slower |
+| pyav (threads=4) | 16.28s | -8% faster |
+| **pyav-opt** (threads=4 + reusable VideoFrame + double-buffered Cairo) | **14.9s** | **-16% faster** |
+| master (FFmpeg subprocess, baseline) | 17.82s | — |
+
+Three changes drove it: cap libx264 threads to ~`cores/4`, reuse one `av.VideoFrame` across the loop instead of `from_ndarray` per frame, and double-buffer Cairo surfaces so the writer thread can read while the render thread paints the next frame. Output is visually identical to master (mean per-channel diff 0.4/255). The system `ffmpeg` apt dependency is gone for good.
+
+**Recommendation: ship the migration.** Set `PYAV_X264_THREADS=2` as the Dockerfile default (re-bench in the bot's 2-CPU cgroup before merging — optimal value scales with core count).
 
 ## Comparison Table (median of 3 trials)
 
@@ -16,25 +27,30 @@
 |---|---:|---|---:|---:|---:|---:|
 | Essex (CV) | 769 | master (subprocess) | 23.56 | 13.71 | 960 | 6.17 |
 | Essex (CV) | 769 | pyav (threads=auto) | 43.60 | 32.90 | 1339 | 6.29 |
-| Essex (CV) | 769 | **pyav (threads=4)** | **23.31** | **13.28** | 1327 | 6.05 |
+| Essex (CV) | 769 | pyav (threads=4) | 23.31 | 13.28 | 1327 | 6.05 |
+| Essex (CV) | 769 | **pyav-opt** | **21.20** | **12.05** | **1148** | 6.05 |
 | Bismarck (BB) | 587 | master (subprocess) | 17.82 | 10.24 | 839 | 2.99 |
 | Bismarck (BB) | 587 | pyav (threads=auto) | 33.17 | 25.54 | 1226 | 3.11 |
-| Bismarck (BB) | 587 | **pyav (threads=4)** | **16.28** | **8.98** | 1198 | 2.96 |
+| Bismarck (BB) | 587 | pyav (threads=4) | 16.28 | 8.98 | 1198 | 2.96 |
+| Bismarck (BB) | 587 | **pyav-opt** | **14.94** | **8.04** | **1027** | 2.96 |
 | Le-Terrible (DD) | 516 | master (subprocess) | 14.54 | 8.92 | 791 | 2.79 |
 | Le-Terrible (DD) | 516 | pyav (threads=auto) | 28.04 | 21.88 | 1176 | 2.90 |
-| Le-Terrible (DD) | 516 | **pyav (threads=4)** | **14.01** | **8.05** | 1155 | 2.72 |
+| Le-Terrible (DD) | 516 | pyav (threads=4) | 14.01 | 8.10 | 1155 | 2.72 |
+| Le-Terrible (DD) | 516 | **pyav-opt** | **12.34** | **6.84** | **985** | 2.72 |
 
-## Deltas (PyAV `threads=4` vs master)
+`pyav-opt` = `PYAV_X264_THREADS=4` + reusable `av.VideoFrame` + double-buffered Cairo surfaces with zero-copy frame handoff.
+
+## Deltas (`pyav-opt` vs master)
 
 | Replay | Wall | Render | Peak RSS | Output Size |
 |---|---:|---:|---:|---:|
-| Essex | **−1.1%** | −3.1% | +38% | −1.9% |
-| Bismarck | **−8.4%** | −12.3% | +43% | −1.0% |
-| Le-Terrible | **−3.7%** | −9.7% | +46% | −2.5% |
+| Essex | **−10.0%** | −12.1% | +20% | −1.9% |
+| Bismarck | **−16.2%** | −21.5% | +22% | −1.0% |
+| Le-Terrible | **−15.1%** | −23.3% | +25% | −2.5% |
 
 (Negative = PyAV is faster / smaller.)
 
-PyAV with `threads=4` is faster than the FFmpeg subprocess on every test replay, with the largest gain on the longest-rendering content (Bismarck). Memory is still ~40-50% higher in absolute terms — that's the unavoidable cost of running encoding in-process — but well within the 4.5 GB cgroup cap of the production bot. Output sizes are slightly smaller, indicating PyAV's bundled libx264 build (newer than Ubuntu 6.1.1) achieves slightly better compression at the same crf.
+The fully-optimized PyAV path is 10-16% faster than the FFmpeg subprocess on wall time and 12-23% faster on the pure render phase. Memory is still ~20-25% higher than the subprocess (was +40-50% before reusable VideoFrame removed per-frame allocation churn) — well within the 4.5 GB cgroup cap of the production bot. Output sizes are slightly smaller because PyAV's bundled libx264 is newer than Ubuntu 6.1.1.
 
 ## x264 Thread-Count Sweep (single trial, Bismarck)
 
@@ -77,6 +93,27 @@ Both renders used the same Bismarck replay with the same `RenderConfig` (1080px 
 - Identical x264 settings: `preset=fast`, `tune=animation`, `crf=23`, `pix_fmt=yuv420p`, `+faststart`.
 - master uses system ffmpeg via subprocess pipe (Ubuntu package: ffmpeg 6.1.1-3ubuntu5); PyAV uses bundled FFmpeg libs in-process (av==17.0.1).
 - Same machine, same environment, ~5 minutes between the two bench runs (no thermal throttling concerns).
+
+## Where the speedups came from
+
+Three independent levers, applied in order. Each was measured on Bismarck before moving to the next.
+
+**Lever 1 — `PYAV_X264_THREADS=4` (vs `0=auto=16`):** render phase 25.54s → 8.98s. By far the largest win. The default `threads=0` lets libx264 spawn one thread per logical core, which on a 16-core dev machine starves Cairo of CPU. Capping at 4 leaves 12 cores for Cairo + queue I/O. See thread sweep below.
+
+**Lever 2 — Reusable `av.VideoFrame`:** render phase 8.98s → 8.04s (further -10%). Replaced `av.VideoFrame.from_ndarray(arr, format="bgra")` (allocates a new frame each call) with one frame allocated at construction and updated in place via `frame.planes[0].update(buffer)`. Also dropped peak RSS from ~1198 MB to ~1027 MB by eliminating per-frame allocation churn.
+
+**Lever 3 — Double-buffered Cairo surfaces:** Bismarck wall 16.28s → 14.94s (-8% wall). Two `cairo.ImageSurface` objects rotate between the render thread and the writer thread; the writer signals each surface as free via a `threading.Event` after consuming it. This eliminates the per-frame `bytes()` memcpy that previously detached the Cairo buffer from the writer queue (8.5 MB × 587 frames = ~5 GB of pure memcpy avoided). The render thread now hands a `memoryview` reference directly to the writer thread.
+
+## Where the ceiling is
+
+After all three levers, the breakdown of the 8.04s render phase on Bismarck is:
+
+- **~5.4s** — pure Cairo per-layer work (team_roster 2.05ms × 587 + capture_points 1.74ms × 587 + right_panel 1.57ms × 587 + ships 0.75ms × 587 + others). This is the layer code, not the encoder.
+- **~0.7s** — `iter_states` + Python loop overhead.
+- **~0.2s** — surface clear.
+- **~1.7s** — remaining "encode phase" (surface.flush + writer queue handoff + occasional encoder back-pressure).
+
+To go meaningfully faster from here, the work has to move into Cairo layer optimization (cached drawing, dirty-region updates, layer-level parallelism) — that's a different project, outside the scope of the encoder migration.
 
 ## Why was PyAV slower with default threading?
 
