@@ -1,0 +1,10 @@
+label,replay,trial,wall_time_s,render_phase_s,encode_phase_s,peak_rss_kib,output_bytes,frames
+pyav,20260327_213920_PASA020-Essex_18_NE_ice_islands.wowsreplay,1,43.766,33.053,0.658,1370212,6592241,769
+pyav,20260327_213920_PASA020-Essex_18_NE_ice_islands.wowsreplay,2,43.600,32.904,0.753,1380568,6592241,769
+pyav,20260327_213920_PASA020-Essex_18_NE_ice_islands.wowsreplay,3,43.407,32.744,0.666,1371084,6592241,769
+pyav,20260403_213640_PGSB708-Bismarck-1941_55_Seychelles.wowsreplay,1,33.649,25.477,0.353,1256084,3263275,587
+pyav,20260403_213640_PGSB708-Bismarck-1941_55_Seychelles.wowsreplay,2,33.173,25.690,0.361,1254924,3263275,587
+pyav,20260403_213640_PGSB708-Bismarck-1941_55_Seychelles.wowsreplay,3,32.989,25.544,0.369,1248916,3263275,587
+pyav,20260321_194840_PFSD508-Le-Terrible_56_AngelWings.wowsreplay,1,28.215,21.999,0.576,1203048,3037438,516
+pyav,20260321_194840_PFSD508-Le-Terrible_56_AngelWings.wowsreplay,2,28.041,21.882,0.592,1213800,3037438,516
+pyav,20260321_194840_PFSD508-Le-Terrible_56_AngelWings.wowsreplay,3,27.997,21.849,0.577,1204512,3037438,516
