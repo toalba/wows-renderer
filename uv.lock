@@ -1021,15 +1021,15 @@ wheels = [
 
 [[package]]
 name = "rich"
-version = "14.3.3"
+version = "15.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "markdown-it-py" },
     { name = "pygments" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b3/c6/f3b320c27991c46f43ee9d856302c70dc2d0fb2dba4842ff739d5f46b393/rich-14.3.3.tar.gz", hash = "sha256:b8daa0b9e4eef54dd8cf7c86c03713f53241884e814f4e2f5fb342fe520f639b", size = 230582, upload-time = "2026-02-19T17:23:12.474Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c0/8f/0722ca900cc807c13a6a0c696dacf35430f72e0ec571c4275d2371fca3e9/rich-15.0.0.tar.gz", hash = "sha256:edd07a4824c6b40189fb7ac9bc4c52536e9780fbbfbddf6f1e2502c31b068c36", size = 230680, upload-time = "2026-04-12T08:24:00.75Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/25/b208c5683343959b670dc001595f2f3737e051da617f66c31f7c4fa93abc/rich-14.3.3-py3-none-any.whl", hash = "sha256:793431c1f8619afa7d3b52b2cdec859562b950ea0d4b6b505397612db8d5362d", size = 310458, upload-time = "2026-02-19T17:23:13.732Z" },
+    { url = "https://files.pythonhosted.org/packages/82/3b/64d4899d73f91ba49a8c18a8ff3f0ea8f1c1d75481760df8c68ef5235bf5/rich-15.0.0-py3-none-any.whl", hash = "sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb", size = 310654, upload-time = "2026-04-12T08:24:02.83Z" },
 ]
 
 [[package]]
@@ -1112,34 +1112,34 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "cairosvg", specifier = ">=2.7" },
-    { name = "click", specifier = ">=8.0" },
-    { name = "discord-py", specifier = ">=2.3" },
+    { name = "click", specifier = ">=8.3.2" },
+    { name = "discord-py", specifier = ">=2.7.1" },
     { name = "pycairo", specifier = ">=1.26" },
-    { name = "python-dotenv", specifier = ">=1.0" },
-    { name = "rich", specifier = ">=13.0" },
-    { name = "wows-replay-parser", specifier = ">=0.1.1" },
+    { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "rich", specifier = ">=15.0.0" },
+    { name = "wows-replay-parser", specifier = ">=0.1.2" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "mypy", specifier = ">=1.10" },
     { name = "pillow", specifier = ">=10" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "ruff", specifier = ">=0.4" },
+    { name = "pytest", specifier = ">=9.0.3" },
+    { name = "ruff", specifier = ">=0.15.10" },
 ]
 
 [[package]]
 name = "wows-replay-parser"
-version = "0.1.1"
+version = "0.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "construct" },
     { name = "lxml" },
     { name = "pycryptodome" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/00/07/9082d68ab9e942d9c930a5fb7a9886a9501a7c48cc1cd25dd994fa0eb6e2/wows_replay_parser-0.1.1.tar.gz", hash = "sha256:1b6b83b73cc30a07b288de1a98df5e29474ee6a4a12d54e17e16aa30168632e2", size = 243051, upload-time = "2026-04-16T08:17:07.293Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/db/27/c19bd3418c41a76adf12830d7779f9dc3c7b6b58a88923ba60c1137ce3e3/wows_replay_parser-0.1.2.tar.gz", hash = "sha256:22cc516d1f4616c14d196c712f2cf7729c183d53ea98ba109eca0d21017a69aa", size = 253766, upload-time = "2026-04-27T07:22:12.214Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ca/ee/9a895d916641da1e096f49c7b474b13fa0eabcdeec992ffd00ae0c30c499/wows_replay_parser-0.1.1-py3-none-any.whl", hash = "sha256:ed0690bee79c99c985ce7f6050c7a661f2e5cf4ff029d36fb367e1f49f1490d2", size = 141808, upload-time = "2026-04-16T08:17:05.586Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/05/fbd5cf4b25b845f56bfbd9a5f2e8d27491c2405ea6311ab9932bb3318c03/wows_replay_parser-0.1.2-py3-none-any.whl", hash = "sha256:f0be3bb0969a7135412ee768a3423b634abe2231d5e7319c5926bb4ef9b367ba", size = 148535, upload-time = "2026-04-27T07:22:10.818Z" },
 ]
 
 [[package]]
