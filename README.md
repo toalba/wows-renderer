@@ -4,6 +4,11 @@ A Cairo-based minimap replay renderer for World of Warships. Parses `.wowsreplay
 
 The project was developed on Wargaming's request for the community.
 
+![Demo render — Arms Race on Ice Islands, 20x speed](docs/images/demo.gif)
+
+> _Looped GIF, downsampled to 12 fps and 960 px wide for repo size — real
+> MP4 output runs at 20 fps and full HD._
+
 ---
 
 ## Features
@@ -32,6 +37,34 @@ The project was developed on Wargaming's request for the community.
 - Direct FFmpeg pipe with async frame writer (~17ms/frame at 1080p)
 - **Discord bot** — `/render` slash command with progress reporting, game type display, per-phase timing breakdown
 - **Docker support** — multi-stage build with persistent gamedata cache volume
+
+---
+
+## Render modes
+
+The renderer ships three layouts, exposed as presets on the Discord bot's
+`/render` command and selectable via the layer list when using the Python API.
+
+### Full
+
+All layers, both side panels — team rosters left, self-player header /
+damage breakdown / ribbons / killfeed right.
+
+![Full preset](docs/images/full.png)
+
+### Map
+
+Minimap only, no panels. Best for embedding or when you just want the
+tactical view without the HUD chrome.
+
+![Map preset](docs/images/map.png)
+
+### Player data
+
+Minimap + right panel (player header, damage stats, ribbons, killfeed).
+Drops the team rosters; keeps the recording-player narrative.
+
+![Player data preset](docs/images/playerdata.png)
 
 ---
 
@@ -337,10 +370,9 @@ The bot renders replays in a `ProcessPoolExecutor` (separate processes for CPU-b
 
 ### Presets
 
-The `/render` command supports three presets:
-- **Full** (default) — all layers + both panels
-- **Map** — minimap only, no side panels
-- **Player data** — minimap + killfeed/ribbons
+The `/render` command exposes the three layouts described in
+[Render modes](#render-modes) above (`full`, `map`, `playerdata`)
+via a slash-command choice, with `full` as the default.
 
 ---
 
