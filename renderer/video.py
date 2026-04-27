@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import queue
 import threading
 from fractions import Fraction
@@ -90,7 +91,7 @@ class PyAVPipe:
             "preset": "fast",
             "tune": "animation",
             "crf": str(crf),
-            "threads": "0",
+            "threads": os.environ.get("PYAV_X264_THREADS", "0"),
         }
         self._time_base = Fraction(1, fps)
 
