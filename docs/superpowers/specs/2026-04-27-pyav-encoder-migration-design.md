@@ -12,10 +12,22 @@ The benchmark drives the migration: we want to confirm PyAV is at least on par w
 
 ## Non-goals
 
-- No change to encoder parameters (libx264, preset=fast, tune=animation, crf=23, yuv420p, +faststart). We want apples-to-apples output quality.
+- No change to **quality-affecting** encoder parameters (libx264, preset=fast, tune=animation, crf=23, yuv420p, +faststart). We want apples-to-apples output quality. See "Encoder Parity Principles" below for the line between "same quality" and "don't hold PyAV back".
 - No change to public API of `core.py`'s render loop or `FrameWriter`'s contract.
 - No new encoder-selection config flag. We're cutting over directly on this branch; the master branch is the rollback option.
 - No change to other layers, the bot, or the gamedata cache.
+
+## Encoder Parity Principles
+
+The benchmark is meaningful only if neither encoder is artificially handicapped. Two rules:
+
+**Equal quality target.** Both paths use the same quality-affecting x264 settings: `preset=fast`, `tune=animation`, `crf=23`, output `yuv420p`. The comparison is "at the same target quality, which path is faster / lighter on memory?" — not "which encoder produces a smaller file at any cost."
+
+**No artificial wrappers.** PyAV is allowed to use its native idiomatic path. Specifically: feed `VideoFrame` objects with `format="bgra"` directly via `from_ndarray`, not through a re-implementation of the rawvideo subprocess pipe. The whole point of moving in-process is to skip the pipe; forcing PyAV to mimic the pipe's data flow would defeat the migration.
+
+**What this rules out:** giving PyAV a slower preset (e.g. `medium`/`slow`) to "showcase" quality gains, switching to hardware encoders (different quality characteristics — apples to oranges), or restricting thread count below `threads=0` (auto). Any of those changes the comparison's meaning.
+
+**What this rules in:** PyAV inherits whatever FFmpeg/x264 build version ships in its wheel, which may be newer than the system ffmpeg on master. That's a genuine deployment difference and gets captured naturally in the benchmark — we don't try to pin versions to match. If output quality drifts beyond the visual parity threshold (5/255 max-channel-diff), that's a finding to investigate, not a bug to paper over.
 
 ## Architecture
 
