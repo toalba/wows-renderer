@@ -76,6 +76,27 @@ class TeamRosterLayer(Layer):
             except Exception:
                 pass
 
+        # Pre-scale stat icons to the per-row stat_icon_size (11px).
+        # Per-frame the damage/kills icon was scaled + paint_with_alpha
+        # every row — at 14 players × 587 frames that's 8200+ scale
+        # interpolations. Pre-scaling makes the per-frame draw a flat blit.
+        STAT_ICON_SIZE = 11
+        self._stat_icons_scaled: dict[str, cairo.ImageSurface] = {}
+        for key, src in self._stat_icons.items():
+            iw, ih = src.get_width(), src.get_height()
+            if iw <= 0 or ih <= 0:
+                continue
+            scale = STAT_ICON_SIZE / max(iw, ih)
+            sw = max(1, round(iw * scale))
+            sh = max(1, round(ih * scale))
+            dst = cairo.ImageSurface(cairo.FORMAT_ARGB32, sw, sh)
+            dcr = cairo.Context(dst)
+            dcr.scale(scale, scale)
+            dcr.set_source_surface(src, 0, 0)
+            dcr.paint()
+            dst.flush()
+            self._stat_icons_scaled[key] = dst
+
         # Load consumable icons (same logic as ConsumableLayer)
         from renderer.assets import load_consumable_icons
         all_icons = load_consumable_icons(gp)
@@ -207,6 +228,32 @@ class TeamRosterLayer(Layer):
                             cooldown_end = float("inf")
                     timeline.append((activated_at, cons_id, active_end, cooldown_end))
             self._cons_timeline[entity_id] = sorted(timeline, key=lambda x: x[0])
+
+        # Pre-render rotated+scaled class icons for the roster.
+        # The base ship_icons (used by ships.py at world-position) are
+        # north-pointing; the roster wants them rotated 90° CW and scaled to
+        # ICON_SIZE. Doing this per frame meant ~14 players × 587 frames =
+        # 8200 transform-stack rebuilds + paint_with_alpha calls; pre-rendering
+        # to a tiny ImageSurface drops the per-frame work to a flat blit.
+        self._roster_icons: dict[tuple[str, str], cairo.ImageSurface] = {}
+        icon_size = self.ICON_SIZE
+        for icon_key, relations in (ctx.ship_icons or {}).items():
+            for relation, src in relations.items():
+                if src is None:
+                    continue
+                iw, ih = src.get_width(), src.get_height()
+                if iw <= 0 or ih <= 0:
+                    continue
+                scale = icon_size / max(iw, ih)
+                dst = cairo.ImageSurface(cairo.FORMAT_ARGB32, icon_size, icon_size)
+                dcr = cairo.Context(dst)
+                dcr.translate(icon_size / 2, icon_size / 2)
+                dcr.rotate(math.pi / 2)
+                dcr.scale(scale, scale)
+                dcr.set_source_surface(src, -iw / 2, -ih / 2)
+                dcr.paint()
+                dst.flush()
+                self._roster_icons[(icon_key, relation)] = dst
 
         self._entity_species: dict[int, str] = {}
         self._entity_ship_name: dict[int, str] = {}
@@ -446,30 +493,22 @@ class TeamRosterLayer(Layer):
         line2_y = y + row_h * 0.72
 
         # --- Class icon (vertically centred across all three lines) ---
+        # Uses pre-rotated + pre-scaled icons from _roster_icons, see initialize().
         icon_key = self._entity_species.get(entity_id)
-        icons = self.ctx.ship_icons or {}
-        if icon_key and icon_key in icons:
+        if icon_key:
             if display_team == 0:
                 relation_key = "ally"
             else:
                 relation_key = "enemy"
             if not is_alive:
                 relation_key = "sunk"
-            icon_surf = icons[icon_key].get(relation_key)
+            icon_surf = self._roster_icons.get((icon_key, relation_key))
             if icon_surf:
                 icon_size = self.ICON_SIZE
-                iw, ih = icon_surf.get_width(), icon_surf.get_height()
-                scale = icon_size / max(iw, ih)
-                cr.save()
-                # SVG icons point up (north); rotate 90° CW for horizontal display
-                cx = self.PAD_X + icon_size / 2
-                cy = y + row_h / 2
-                cr.translate(cx, cy)
-                cr.rotate(math.pi / 2)
-                cr.scale(scale, scale)
-                cr.set_source_surface(icon_surf, -iw / 2, -ih / 2)
+                cx = self.PAD_X
+                cy = y + (row_h - icon_size) / 2
+                cr.set_source_surface(icon_surf, cx, cy)
                 cr.paint_with_alpha(alpha)
-                cr.restore()
 
         text_x = self.PAD_X + self.ICON_SIZE + 5
         stat_x = panel_w - self.PAD_X - self.HP_BAR_WIDTH - 6  # leave room for HP bar on right
@@ -486,16 +525,14 @@ class TeamRosterLayer(Layer):
                 cr, kills_text, self.STAT_FONT_SIZE, True, tr, tg, tb,
             )
             kills_block_x = stat_x - kills_text_w
-            frags_icon = self._stat_icons.get("frags")
+            frags_icon = self._stat_icons_scaled.get("frags")
             if frags_icon:
-                fiw, fih = frags_icon.get_width(), frags_icon.get_height()
-                fscale = stat_icon_size / max(fiw, fih)
-                cr.save()
-                cr.translate(kills_block_x - stat_icon_size - 2, line1_y - stat_icon_size + 1)
-                cr.scale(fscale, fscale)
-                cr.set_source_surface(frags_icon, 0, 0)
+                cr.set_source_surface(
+                    frags_icon,
+                    kills_block_x - stat_icon_size - 2,
+                    line1_y - stat_icon_size + 1,
+                )
                 cr.paint_with_alpha(alpha * 0.85)
-                cr.restore()
             self.draw_cached_text(
                 cr, kills_block_x, line1_y, kills_text, tr, tg, tb,
                 alpha=alpha, font_size=self.STAT_FONT_SIZE, bold=True,
@@ -525,17 +562,15 @@ class TeamRosterLayer(Layer):
         )
 
         # Damage icon + number right-aligned
-        dmg_icon = self._stat_icons.get("damage")
+        dmg_icon = self._stat_icons_scaled.get("damage")
         dmg_block_x = stat_x - dmg_text_w
         if dmg_icon:
-            iw, ih = dmg_icon.get_width(), dmg_icon.get_height()
-            iscale = stat_icon_size / max(iw, ih)
-            cr.save()
-            cr.translate(dmg_block_x - stat_icon_size - 2, line2_y - stat_icon_size + 1)
-            cr.scale(iscale, iscale)
-            cr.set_source_surface(dmg_icon, 0, 0)
+            cr.set_source_surface(
+                dmg_icon,
+                dmg_block_x - stat_icon_size - 2,
+                line2_y - stat_icon_size + 1,
+            )
             cr.paint_with_alpha(alpha * 0.85)
-            cr.restore()
         self.draw_cached_text(
             cr, dmg_block_x, line2_y, dmg_text, dr, dg, db,
             alpha=alpha, font_size=self.STAT_FONT_SIZE,
