@@ -36,15 +36,19 @@ services:
     # renders plus the idle bot (~1.2G).
     # `deploy.resources` works in Compose v2.20+ (non-swarm); mem_limit/cpus
     # are the legacy equivalents kept for broader compatibility.
+    # The bot is the sole tenant on this VPS, so the CPU cap is set to the
+    # full 4 vCPUs. With MAX_WORKERS=2, a single render can use all 4 cores
+    # via libx264 auto-threading; concurrent renders timeshare via the OS
+    # scheduler. Memory cap stays at 4.5G to leave the host OS comfortable.
     deploy:
       resources:
         limits:
           memory: 4608M
-          cpus: "2.0"
+          cpus: "4.0"
         reservations:
           memory: 1G
     mem_limit: 4608m
-    cpus: 2.0
+    cpus: 4.0
 
     # Rolling logs: ~50 MB ceiling (10 MB × 5 files). Prevents disk fill from
     # render-heavy days.
