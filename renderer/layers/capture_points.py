@@ -299,6 +299,37 @@ class CapturePointLayer(Layer):
                 font_size=self.LABEL_FONT_SIZE * s, bold=True, outline_width=3.5 * s,
             )
 
+        self._render_buff_zones(cr, state, timestamp, team_colors)
+
+    def _render_buff_zones(
+        self, cr: cairo.Context, state: object, timestamp: float,
+        team_colors: dict,
+    ) -> None:
+        zone_positions = self.ctx.replay.zone_positions
+        zone_lifetimes = self.ctx.replay.zone_lifetimes
+        for eid, bz in (state.buff_zones or {}).items():
+            if eid not in self._zone_buff_type:
+                continue
+            lifetime = zone_lifetimes.get(eid)
+            leave_time = lifetime[1] if lifetime is not None else None
+            if leave_time is not None and timestamp >= leave_time:
+                continue
+            timeline = zone_positions.get(eid)
+            if timeline:
+                wx, wz = timeline[0][1], timeline[0][2]
+                for ts, tx, tz in timeline:
+                    if ts <= timestamp:
+                        wx, wz = tx, tz
+                    else:
+                        break
+            else:
+                pos = getattr(bz, "position", None)
+                if not pos or (pos[0] == 0.0 and pos[2] == 0.0):
+                    continue
+                wx, wz = pos[0], pos[2]
+            px, py = self.ctx.world_to_pixel(wx, wz)
+            self._render_buff(cr, px, py, eid, bz, team_colors)
+
     def _render_buff(
         self, cr: cairo.Context, px: float, py: float,
         eid: int, cap, team_colors: dict,
