@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 class BaseMinimapRenderer:
     """Shared infrastructure for single- and dual-perspective renderers.
 
-    Owns the layer list, frame loop, ffmpeg pipe, timestamp computation, and
+    Owns the layer list, frame loop, encoder pipe, timestamp computation, and
     per-phase timing dict. Subclasses provide a concrete render context by
     implementing :meth:`_build_context`.
     """
@@ -110,7 +110,7 @@ class BaseMinimapRenderer:
         surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
         cr = cairo.Context(surface)
 
-        # Open ffmpeg pipe — manual close so we can time encode separately
+        # Open encoder pipe — manual close so we can time encode separately
         pipe = PyAVPipe(output_path, width, height, config.fps, config.crf, config.codec)
         try:
             t_render_start = perf_counter()
@@ -144,7 +144,7 @@ class BaseMinimapRenderer:
             writer.finish()
             t_render_end = perf_counter()
 
-            # Close pipe: flushes stdin + waits for ffmpeg to finish encoding.
+            # Close pipe: flushes encoder lookahead and finalises mp4.
             pipe.close()
             t_encode_end = perf_counter()
         except Exception:

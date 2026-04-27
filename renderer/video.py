@@ -111,9 +111,11 @@ class PyAVPipe:
 
     def close(self) -> None:
         """Flush encoder lookahead queue and finalise mp4."""
-        for packet in self._stream.encode(None):
-            self._container.mux(packet)
-        self._container.close()
+        try:
+            for packet in self._stream.encode(None):
+                self._container.mux(packet)
+        finally:
+            self._container.close()
 
     def __enter__(self) -> PyAVPipe:
         return self
