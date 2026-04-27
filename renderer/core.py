@@ -104,23 +104,42 @@ class BaseMinimapRenderer:
         total_frames = int(math.floor((end - start) / dt)) + 1
         timestamps = [start + i * dt for i in range(total_frames)]
 
-        # Create reusable cairo surface
+        # Double-buffered Cairo surfaces — main thread alternates between
+        # them so the writer thread can encode frame N while we paint
+        # frame N+1. The release_event per slot lets the writer signal
+        # when it has finished reading from a surface.
+        import threading
         width = config.total_width
         height = config.total_height
-        surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
-        cr = cairo.Context(surface)
+        N_BUFFERS = 2
+        surfaces = [
+            cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
+            for _ in range(N_BUFFERS)
+        ]
+        contexts = [cairo.Context(s) for s in surfaces]
+        release_events = [threading.Event() for _ in range(N_BUFFERS)]
+        for ev in release_events:
+            ev.set()  # all slots initially free
 
         # Open encoder pipe — manual close so we can time encode separately
         pipe = PyAVPipe(output_path, width, height, config.fps, config.crf, config.codec)
         try:
             t_render_start = perf_counter()
-            writer = FrameWriter(pipe, maxsize=16)
+            writer = FrameWriter(pipe, maxsize=N_BUFFERS)
 
             # iter_states for O(delta) incremental state queries instead of
             # state_at() which is O(history) per frame.
             state_iter = replay.iter_states(timestamps)
 
             for frame_idx, (t, state) in enumerate(zip(timestamps, state_iter, strict=False)):
+                slot = frame_idx % N_BUFFERS
+                # Wait for the writer thread to finish reading this slot's
+                # surface before we paint over it.
+                release_events[slot].wait()
+                release_events[slot].clear()
+                surface = surfaces[slot]
+                cr = contexts[slot]
+
                 # 1. Clear surface
                 cr.save()
                 cr.set_operator(cairo.OPERATOR_CLEAR)
@@ -133,9 +152,10 @@ class BaseMinimapRenderer:
                     layer.render(cr, state, t)
                     cr.restore()
 
-                # 3. Copy frame data and write async (pipe I/O in background thread)
+                # 3. Hand the surface buffer to the writer thread (zero-copy).
+                # The writer will set release_events[slot] when done reading.
                 surface.flush()
-                writer.write_frame(surface.get_data())
+                writer.write_frame(surface.get_data(), release_events[slot])
 
                 # 4. Progress
                 if progress_callback:

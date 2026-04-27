@@ -7,24 +7,27 @@ from fractions import Fraction
 from pathlib import Path
 
 import av
-import numpy as np
 
 
 class FrameWriter:
     """Async frame writer that offloads encoding to a background thread.
 
-    The main thread calls write_frame() which copies the frame data and
-    enqueues it. A background thread drains the queue into the encoder, so
-    the main thread never blocks on the (synchronous) PyAV encode call.
+    Caller passes (memoryview, release_event) per frame. The view points
+    into a caller-owned buffer (typically a Cairo surface). The writer
+    thread reads the view into the encoder, then sets release_event so
+    the caller knows the buffer is safe to reuse.
 
-    The bytes() copy on enqueue is load-bearing: it detaches from the
-    Cairo surface buffer that the main thread will overwrite on the next
-    frame.
+    This zero-copy handoff requires the caller to manage a small pool of
+    buffers (typically 2) and only paint to a buffer once its release
+    event has fired. See BaseMinimapRenderer._render_frames for the
+    double-buffered Cairo-surface pattern.
     """
 
-    def __init__(self, pipe: PyAVPipe, maxsize: int = 8) -> None:
+    def __init__(self, pipe: PyAVPipe, maxsize: int = 4) -> None:
         self._pipe = pipe
-        self._queue: queue.Queue[bytes | None] = queue.Queue(maxsize=maxsize)
+        self._queue: queue.Queue[
+            tuple[memoryview | bytes, threading.Event] | None
+        ] = queue.Queue(maxsize=maxsize)
         self._error: Exception | None = None
         self._thread = threading.Thread(target=self._writer_loop, daemon=True)
         self._thread.start()
@@ -32,17 +35,33 @@ class FrameWriter:
     def _writer_loop(self) -> None:
         try:
             while True:
-                frame = self._queue.get()
-                if frame is None:
+                item = self._queue.get()
+                if item is None:
                     break
-                self._pipe.write_frame(frame)
+                frame_data, release_event = item
+                self._pipe.write_frame(frame_data)
+                release_event.set()
         except Exception as e:
             self._error = e
 
-    def write_frame(self, frame_data: bytes | memoryview) -> None:
+    def write_frame(
+        self,
+        frame_data: memoryview | bytes,
+        release_event: threading.Event | None = None,
+    ) -> None:
+        """Hand a frame to the writer thread.
+
+        With release_event=None (legacy, used by profile_frames.py) the
+        bytes are copied so the caller can immediately reuse the source
+        buffer. With release_event provided (zero-copy fast path) the
+        caller MUST wait on release_event before reusing the buffer.
+        """
         if self._error:
             raise self._error
-        self._queue.put(bytes(frame_data))
+        if release_event is None:
+            release_event = threading.Event()
+            frame_data = bytes(frame_data)
+        self._queue.put((frame_data, release_event))
 
     def finish(self) -> None:
         self._queue.put(None)
@@ -94,19 +113,19 @@ class PyAVPipe:
             "threads": os.environ.get("PYAV_X264_THREADS", "0"),
         }
         self._time_base = Fraction(1, fps)
+        # Reusable VideoFrame — skip per-frame allocation that
+        # av.VideoFrame.from_ndarray would do. We update plane 0 in place.
+        self._frame = av.VideoFrame(width, height, "bgra")
+        self._frame.time_base = self._time_base
 
     def write_frame(self, frame_data: bytes | memoryview) -> None:
         """Encode one raw BGRA frame.
 
         Accepts bytes or memoryview from cairo surface.get_data().
         """
-        arr = np.frombuffer(frame_data, dtype=np.uint8).reshape(
-            self.height, self.width, 4,
-        )
-        frame = av.VideoFrame.from_ndarray(arr, format="bgra")
-        frame.pts = self.frame_count
-        frame.time_base = self._time_base
-        for packet in self._stream.encode(frame):
+        self._frame.planes[0].update(frame_data)
+        self._frame.pts = self.frame_count
+        for packet in self._stream.encode(self._frame):
             self._container.mux(packet)
         self.frame_count += 1
 
