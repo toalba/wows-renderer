@@ -1,20 +1,27 @@
 from __future__ import annotations
 
 import queue
-import subprocess
 import threading
+from fractions import Fraction
 from pathlib import Path
+
+import av
+import numpy as np
 
 
 class FrameWriter:
-    """Async frame writer that offloads pipe I/O to a background thread.
+    """Async frame writer that offloads encoding to a background thread.
 
     The main thread calls write_frame() which copies the frame data and
-    enqueues it. A background thread drains the queue into ffmpeg's stdin,
-    so the main thread never blocks on pipe I/O.
+    enqueues it. A background thread drains the queue into the encoder, so
+    the main thread never blocks on the (synchronous) PyAV encode call.
+
+    The bytes() copy on enqueue is load-bearing: it detaches from the
+    Cairo surface buffer that the main thread will overwrite on the next
+    frame.
     """
 
-    def __init__(self, pipe: FFmpegPipe, maxsize: int = 8) -> None:
+    def __init__(self, pipe: PyAVPipe, maxsize: int = 8) -> None:
         self._pipe = pipe
         self._queue: queue.Queue[bytes | None] = queue.Queue(maxsize=maxsize)
         self._error: Exception | None = None
@@ -32,24 +39,27 @@ class FrameWriter:
             self._error = e
 
     def write_frame(self, frame_data: bytes | memoryview) -> None:
-        """Copy frame data and enqueue for background writing."""
         if self._error:
             raise self._error
         self._queue.put(bytes(frame_data))
 
     def finish(self) -> None:
-        """Signal the writer thread to stop and wait for it."""
         self._queue.put(None)
         self._thread.join()
         if self._error:
             raise self._error
 
 
-class FFmpegPipe:
-    """Pipes raw BGRA frames directly to ffmpeg's stdin for encoding.
+class PyAVPipe:
+    """In-process H.264 encoder via PyAV.
 
-    Cairo ARGB32 is BGRA in memory (little-endian). We feed this directly
-    to ffmpeg — zero conversion, zero disk I/O.
+    Cairo ARGB32 (BGRA in memory on little-endian) is fed directly to
+    libswscale via VideoFrame.from_ndarray — no rawvideo pipe, no
+    subprocess, no stderr drainer.
+
+    Quality-affecting x264 settings match the previous FFmpegPipe
+    invocation exactly: preset=fast, tune=animation, crf=23, yuv420p
+    output, +faststart for web playback.
     """
 
     def __init__(
@@ -63,76 +73,49 @@ class FFmpegPipe:
     ) -> None:
         self.width = width
         self.height = height
+        self.fps = fps
         self.frame_count = 0
 
-        cmd = [
-            "ffmpeg",
-            "-y",                        # Overwrite output
-            "-loglevel", "error",        # Silence banner + stream info; only print real errors
-            "-nostats",                  # Suppress per-second progress lines on stderr
-            "-f", "rawvideo",            # Raw input format
-            "-pix_fmt", "bgra",          # Input pixel format (cairo ARGB32 = BGRA on LE)
-            "-s", f"{width}x{height}",   # Frame size
-            "-r", str(fps),              # Frame rate
-            "-i", "pipe:0",             # Read from stdin
-            "-c:v", codec,               # Video codec
-            "-preset", "fast",           # Good speed/compression balance for flat graphics
-            "-tune", "animation",        # Optimized for flat graphics / few colors
-            "-threads", "0",             # Use all available cores
-            "-crf", str(crf),            # Quality
-            "-pix_fmt", "yuv420p",       # Output pixel format (Discord/browser compat)
-            "-movflags", "+faststart",   # Web-optimized mp4
+        self._container = av.open(
             str(output_path),
-        ]
-
-        self.proc = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+            mode="w",
+            format="mp4",
+            options={"movflags": "+faststart"},
         )
-        # ffmpeg writes progress/status to stderr continuously. If we don't
-        # drain it, the kernel pipe buffer (~64 KB) fills and ffmpeg blocks
-        # on write, unable to exit — the whole worker then deadlocks in
-        # self.proc.wait() below. Drain on a daemon thread so stderr never
-        # stalls the encoder.
-        self._stderr_chunks: list[bytes] = []
-        self._stderr_thread = threading.Thread(
-            target=self._drain_stderr, daemon=True,
-        )
-        self._stderr_thread.start()
-
-    def _drain_stderr(self) -> None:
-        if self.proc.stderr is None:
-            return
-        for line in iter(self.proc.stderr.readline, b""):
-            self._stderr_chunks.append(line)
+        self._stream = self._container.add_stream(codec, rate=fps)
+        self._stream.width = width
+        self._stream.height = height
+        self._stream.pix_fmt = "yuv420p"
+        self._stream.options = {
+            "preset": "fast",
+            "tune": "animation",
+            "crf": str(crf),
+            "threads": "0",
+        }
+        self._time_base = Fraction(1, fps)
 
     def write_frame(self, frame_data: bytes | memoryview) -> None:
-        """Write one raw BGRA frame to ffmpeg.
+        """Encode one raw BGRA frame.
 
-        Accepts bytes or memoryview (from cairo surface.get_data()).
+        Accepts bytes or memoryview from cairo surface.get_data().
         """
-        assert self.proc.stdin is not None
-        self.proc.stdin.write(frame_data)
+        arr = np.frombuffer(frame_data, dtype=np.uint8).reshape(
+            self.height, self.width, 4,
+        )
+        frame = av.VideoFrame.from_ndarray(arr, format="bgra")
+        frame.pts = self.frame_count
+        frame.time_base = self._time_base
+        for packet in self._stream.encode(frame):
+            self._container.mux(packet)
         self.frame_count += 1
 
     def close(self) -> None:
-        """Finalize the video file."""
-        if self.proc.stdin:
-            self.proc.stdin.close()
-        self.proc.wait()
-        # Wait for the stderr drainer to finish reading all output (the pipe
-        # closes when ffmpeg exits, so this should return very quickly).
-        self._stderr_thread.join(timeout=10)
-        if self.proc.returncode != 0:
-            stderr = b"".join(self._stderr_chunks)
-            raise RuntimeError(
-                f"ffmpeg exited with code {self.proc.returncode}: "
-                f"{stderr.decode(errors='replace')}"
-            )
+        """Flush encoder lookahead queue and finalise mp4."""
+        for packet in self._stream.encode(None):
+            self._container.mux(packet)
+        self._container.close()
 
-    def __enter__(self) -> FFmpegPipe:
+    def __enter__(self) -> PyAVPipe:
         return self
 
     def __exit__(self, *args: object) -> None:

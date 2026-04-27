@@ -21,7 +21,7 @@ from renderer.layers.base import (
     Layer,
     SingleRenderContext,
 )
-from renderer.video import FFmpegPipe, FrameWriter
+from renderer.video import PyAVPipe, FrameWriter
 
 if TYPE_CHECKING:
     from wows_replay_parser.api import ParsedReplay
@@ -111,7 +111,7 @@ class BaseMinimapRenderer:
         cr = cairo.Context(surface)
 
         # Open ffmpeg pipe — manual close so we can time encode separately
-        pipe = FFmpegPipe(output_path, width, height, config.fps, config.crf, config.codec)
+        pipe = PyAVPipe(output_path, width, height, config.fps, config.crf, config.codec)
         try:
             t_render_start = perf_counter()
             writer = FrameWriter(pipe, maxsize=16)
