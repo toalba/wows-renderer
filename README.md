@@ -4,7 +4,7 @@ A Cairo-based minimap replay renderer for World of Warships. Parses `.wowsreplay
 
 The project was developed on Wargaming's request for the community.
 
-> 🤖 **[Add the bot to your Discord server](https://discord.com/oauth2/authorize?client_id=1484308379101958255&permissions=2147600384&integration_type=0&scope=bot+applications.commands)** — drop a `.wowsreplay` into chat and call `/render`.
+> 🤖 **[Add the bot to your Discord server](https://discord.com/oauth2/authorize?client_id=1484308379101958255&permissions=2147600384&integration_type=0&scope=bot+applications.commands)** — invoke `/render` and attach a `.wowsreplay`.
 
 ![Demo render — Arms Race on Ice Islands, 20x speed](docs/images/demo.gif)
 
