@@ -21,7 +21,7 @@ from renderer.layers.base import (
     Layer,
     SingleRenderContext,
 )
-from renderer.video import PyAVPipe, FrameWriter
+from renderer.video import FrameWriter, PyAVPipe
 
 if TYPE_CHECKING:
     from wows_replay_parser.api import ParsedReplay
