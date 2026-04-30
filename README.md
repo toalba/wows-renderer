@@ -126,12 +126,11 @@ Or if already cloned:
 git submodule update --init --recursive
 ```
 
-> **Gamedata access:** the `wows-gamedata` submodule is currently private.
-> A sanitized public version is in preparation. In the meantime, public
-> users should extract the relevant assets (`scripts_entity/entity_defs`,
-> `spaces/`, `gui/`, `ships.json`, etc.) from their own World of Warships
-> installation via `wowsunpack` and place the tree at `./wows-gamedata/data/`
-> (or point the `GAMEDATA_PATH` env var at it).
+> **Gamedata access:** the `wows-gamedata` submodule clones from the public
+> [`wows-render-gamedata`](https://github.com/toalba/wows-render-gamedata)
+> repo, which carries the production-required subset of game assets and is
+> kept in sync with each WoWs build via tagged releases. No extra setup needed
+> beyond `git submodule update --init`.
 
 ### 2. Install dependencies
 
