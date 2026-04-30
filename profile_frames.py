@@ -26,7 +26,7 @@ from renderer.layers.weather import WeatherLayer
 from renderer.layers.aircraft import AircraftLayer
 from renderer.layers.team_roster import TeamRosterLayer
 from renderer.layers.right_panel import RightPanelLayer
-from renderer.video import FFmpegPipe, FrameWriter
+from renderer.video import PyAVPipe, FrameWriter
 from wows_replay_parser import parse_replay
 
 REPLAY = sys.argv[1] if len(sys.argv) > 1 else "20260322_225740_PBSD598-Black-Cossack_15_NE_north.wowsreplay"
@@ -114,7 +114,7 @@ layer_names = [name for name, _ in layers]
 state_iter = replay.iter_states(timestamps)
 render_start = time.perf_counter()
 
-with FFmpegPipe(OUTPUT, width, height, config.fps, config.crf, config.codec) as pipe:
+with PyAVPipe(OUTPUT, width, height, config.fps, config.crf, config.codec) as pipe:
     writer = FrameWriter(pipe)
 
     for frame_idx, (t, state) in enumerate(zip(timestamps, state_iter)):

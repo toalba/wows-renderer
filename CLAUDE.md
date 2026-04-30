@@ -41,7 +41,7 @@ wows-minimap-renderer/
 │   │   ├── killfeed.py        # Right panel: kill feed + chat messages, bottom-up
 │   │   ├── right_panel.py     # Right panel composite: player_header + damage_stats + ribbons + killfeed
 │   │   └── hud.py             # Score bar, timer, TTW pills, 1-kill-swing indicator, match result
-│   ├── video.py               # FFmpegPipe + FrameWriter (async background thread for pipe I/O)
+│   ├── video.py               # PyAVPipe + FrameWriter (async background thread offloads stream.encode())
 │   └── assets.py              # Asset loading (minimaps, ship icons, consumable icons, ribbons, projectiles, ships.json, map_sizes, ship_consumables)
 ├── scripts/
 │   └── decode_gameparams.py   # CLI: Decode GameParams.data → JSON / split files
@@ -86,7 +86,7 @@ Note: layer 4 (`weather`) and layer 6 (`trails`) are omitted in `render_quick.py
 - **~57 fps** rendering at 1920x1104 (1080px minimap + 420px panels)
 - **~17ms/frame** average (encode 40%, team_roster 16%, overhead 12%, right_panel 9%, ships 7%)
 - **Async FrameWriter** — pipe I/O offloaded to background thread (video.py), queue size 16
-- **FFmpeg fast preset** — 3x smaller output vs ultrafast (~5MB vs 16MB for typical match)
+- **PyAV in-process encoder** — `preset=fast` + `tune=animation` + `crf=23` + `yuv420p`; ~3x smaller output vs ultrafast (~5MB vs 16MB for typical match). H.264 via libx264 bundled in the PyAV wheel — no system ffmpeg dependency.
 - **Static background cache** — map_bg renders once at init, single cr.paint() per frame
 - **Text surface cache** — draw_cached_text() renders text to small surfaces once, blits via cr.paint()
 - **Index-based timestamps** — avoids float accumulation drift
@@ -111,7 +111,6 @@ Note: layer 4 (`weather`) and layer 6 (`trails`) are omitted in `render_quick.py
 - Self-player typed damage breakdown (AP/HE/SAP/torp/fire/flood/secondary) via DamageReceivedStatEvent
 
 ### Known Issues
-- Ribbon derive_ribbons() has a bug (RIBBON_NAMES dict inverted) — using extract_recording_player_ribbons() instead
 - Airstrike icons for other players' airstrikes may show default (bomber_depth_charge) when params_id=0 in wire protocol
 
 ## Dependencies
@@ -121,6 +120,8 @@ Note: layer 4 (`weather`) and layer 6 (`trails`) are omitted in `render_quick.py
 dependencies = [
     "wows-replay-parser",        # Git dependency — the replay parser
     "pycairo>=1.26",             # Cairo vector graphics (2D rendering)
+    "av>=17.0.1",                # PyAV — in-process H.264 encoder (bundles FFmpeg libs)
+    "numpy>=2.0",                # BGRA buffer view for PyAV VideoFrame.from_ndarray
     "discord.py>=2.3",           # Discord bot
     "python-dotenv>=1.0",        # .env file loading for bot config
     "click>=8.0",                # CLI dependencies (reserved)
@@ -134,7 +135,6 @@ wows-replay-parser = { path = "../wows-replay-parser" }  # local dev; Docker use
 ```
 
 **External runtime dependencies:**
-- **FFmpeg** must be on PATH (used via subprocess pipe, not a Python package)
 - **Cairo** system library (pycairo is a binding, needs libcairo installed on Linux/macOS; Windows wheels include it)
 - **Git** must be on PATH (used by gamedata_cache.py for `git archive` + `git tag` to extract version-specific data)
 

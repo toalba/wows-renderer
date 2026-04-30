@@ -30,7 +30,6 @@ FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     git \
-    ffmpeg \
     fontconfig \
     && rm -rf /var/lib/apt/lists/*
 
