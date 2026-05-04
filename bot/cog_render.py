@@ -358,7 +358,7 @@ class RenderCog(commands.Cog):
             log.exception("Render worker died for %s", replay.filename)
             await self._replace_broken_pool(pool)
             await interaction.edit_original_response(
-                content="Render worker crashed (likely out of memory). Please try again.",
+                content="Render worker crashed. Please try again.",
             )
         except Exception:
             log.exception("Render failed for %s", replay.filename)
@@ -426,7 +426,7 @@ class RenderCog(commands.Cog):
                 log.warning("Worker died rendering batch item #%d (%s)", item.index + 1, item.filename)
                 return _BatchResult(
                     item=item, ok=False,
-                    error="worker crashed (likely OOM)",
+                    error="worker crashed",
                     pool_died=True,
                 )
             except Exception as e:  # noqa: BLE001

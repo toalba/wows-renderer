@@ -170,6 +170,14 @@ class BaseMinimapRenderer:
         except Exception:
             pipe.close()
             raise
+        finally:
+            # Drop the class-level text-surface cache: it's a per-render
+            # optimisation (damage values + player names repeat across
+            # thousands of frames in one match), but in long-lived bot
+            # workers chat messages, per-match player names, and dynamic
+            # numeric strings would otherwise accumulate cairo ImageSurfaces
+            # forever — that's the slow worker RSS drift we hunted down.
+            Layer._text_cache.clear()
 
         self.timings["render"] = t_render_end - t_render_start
         self.timings["encode"] = t_encode_end - t_render_end
@@ -260,8 +268,11 @@ class MinimapRenderer(BaseMinimapRenderer):
             gamedata_path=gamedata_path,
         )
 
-        # Load ship database, icons, and consumable type IDs
-        ship_db = load_ships_db(gamedata_path)
+        # Load ship database, icons, and consumable type IDs.
+        # Pass the VGD so version-specific data isn't pinned by the
+        # module-level cache from the first replay's version.
+        vgd = self.config.versioned_gamedata
+        ship_db = load_ships_db(gamedata_path, vgd=vgd)
         ship_icons = load_ship_icons(
             gamedata_path, self.config.team_colors, self.config.self_color,
         )
@@ -374,8 +385,10 @@ class DualMinimapRenderer(BaseMinimapRenderer):
         surface.
         """
         # Dual mode uses team colors for both sides; there is no "self" ship
-        # that needs the white-tinted icon variant.
-        ship_db = load_ships_db(gamedata_path)
+        # that needs the white-tinted icon variant. Same VGD pass-through as
+        # the single-replay path — avoids first-version pinning in the worker.
+        vgd = self.config.versioned_gamedata
+        ship_db = load_ships_db(gamedata_path, vgd=vgd)
         ship_icons = load_ship_icons(gamedata_path, self.config.team_colors, None)
         _load_consumable_type_ids(gamedata_path)
 

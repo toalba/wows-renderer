@@ -42,6 +42,39 @@ def test_render_produces_output(fixture_rendered_output: Path) -> None:
     assert fixture_rendered_output.stat().st_size > 0
 
 
+def test_render_clears_text_cache(
+    tmp_path: Path,
+    fixture_replay_path: Path,
+    fixture_gamedata_path: Path,
+) -> None:
+    """`Layer._text_cache` must be empty after a render. Otherwise long-lived
+    bot workers leak cairo ImageSurfaces (player names + dynamic damage
+    strings + chat text) across renders — the slow worker-RSS drift root cause."""
+    from renderer.layers.base import Layer
+    from renderer.layers.health_bars import HealthBarLayer
+    from renderer.layers.hud import HudLayer
+    from renderer.layers.map_bg import MapBackgroundLayer
+    from renderer.layers.ships import ShipLayer
+
+    config = RenderConfig(
+        gamedata_path=fixture_gamedata_path,
+        speed=30.0,
+        fps=10,
+        minimap_size=480,
+        panel_width=0,
+        end_time=60.0,
+    )
+    renderer = MinimapRenderer.from_replay_file(fixture_replay_path, config)
+    for layer in [MapBackgroundLayer(), ShipLayer(), HealthBarLayer(), HudLayer()]:
+        renderer.add_layer(layer)
+
+    Layer._text_cache[("__sentinel__", "x", 0, False, 0, 0, 0)] = object()  # type: ignore[assignment]
+    renderer.render(output_path=tmp_path / "leak_check.mp4")
+    assert Layer._text_cache == {}, (
+        f"text cache not cleared after render — {len(Layer._text_cache)} entries leaked"
+    )
+
+
 def test_dual_render_smoke(
     tmp_path: Path,
     paired_fixture_paths: tuple[Path, Path],

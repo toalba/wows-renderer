@@ -50,7 +50,7 @@ class ConsumableLayer(Layer):
         from renderer.assets import load_consumable_icons, load_ship_consumables
         gp = ctx.config.effective_gamedata_path
         all_icons = load_consumable_icons(gp)
-        ship_consumables = load_ship_consumables(gp)
+        ship_consumables = load_ship_consumables(gp, vgd=ctx.config.versioned_gamedata)
 
         # Build global cons_id → icon mapping
         self._type_icons = {}
