@@ -5,7 +5,7 @@ from pathlib import Path
 
 import cairo
 
-from renderer.layers.base import FONT_FAMILY, BaseRenderContext, Layer
+from renderer.layers.base import FONT_FAMILY, BaseRenderContext, Layer, _font_for_text
 
 # DEATH_REASON enum from battle.xml → (label, icon_frag filename)
 _DEATH_REASON: dict[int, tuple[str, str]] = {
@@ -180,10 +180,25 @@ class KillfeedLayer(Layer):
         font_size = self.FONT_SIZE * s
         line_h = self.LINE_HEIGHT * s
         icon_size = self.ICON_SIZE * s
+        # 4px right padding so wrapped text doesn't touch the panel edge
+        max_x = config.left_panel + config.minimap_size + config.right_panel - 4
+
+        # Pre-compute wrapped layout per entry so multi-line entries consume
+        # multiple line slots (chat: word-wrapped message; kill: victim wraps
+        # to a second line when killer+icon+victim won't fit).
+        layouts: list[tuple[int, object]] = []
+        for _age, entry in visible:
+            if entry.kind == "chat":
+                chat_layout = self._chat_layout(cr, entry, x_base, max_x, font_size)
+                layouts.append((max(1, len(chat_layout[1])), chat_layout))
+            else:
+                kill_lines = self._kill_layout(cr, entry, x_base, max_x, font_size, icon_size)
+                layouts.append((kill_lines, None))
+        total_slots = sum(n for n, _ in layouts)
 
         # Anchor from bottom of minimap area, grow upward
         y_bottom = config.hud_height + config.minimap_size - 10
-        y_start = y_bottom - len(visible) * line_h
+        y_start = y_bottom - total_slots * line_h
 
         # Clip to right panel area
         cr.save()
@@ -192,26 +207,29 @@ class KillfeedLayer(Layer):
         cr.rectangle(clip_x, 0, clip_w, config.total_height)
         cr.clip()
 
-        for i, (age, entry) in enumerate(visible):
-            y = y_start + i * line_h
+        slots_used = 0
+        for (age, entry), (n_lines, chat_layout) in zip(visible, layouts):
+            y = y_start + slots_used * line_h
 
             if entry.kind == "kill":
                 max_age = self.DISPLAY_DURATION
                 alpha = min(1.0, (max_age - age) / 20.0)
-                self._render_kill(cr, x_base, y, alpha, entry, font_size, icon_size, player_lookup)
+                self._render_kill(cr, x_base, y, alpha, entry, font_size, icon_size,
+                                  line_h, max_x, n_lines, player_lookup)
             else:
                 max_age = self.CHAT_DISPLAY_DURATION
                 alpha = min(1.0, (max_age - age) / 30.0)
-                self._render_chat(cr, x_base, y, alpha, entry, font_size)
+                self._render_chat(cr, x_base, y, alpha, entry, font_size, line_h, chat_layout)
+
+            slots_used += n_lines
 
         cr.restore()  # end clip
 
-    def _render_kill(
-        self, cr: cairo.Context, x_base: float, y: float, alpha: float,
-        entry: _FeedEntry, font_size: float, icon_size: float,
-        player_lookup: dict,
-    ) -> None:
+    def _kill_components(self, entry: _FeedEntry) -> dict:
+        """Resolve names, colors, ships, and death icon/label for a kill entry.
+        Shared between layout (measure-only) and render passes."""
         config = self.ctx.config
+        player_lookup = self.ctx.player_lookup
         killer = player_lookup.get(entry.killer_id)
         victim = player_lookup.get(entry.victim_id)
 
@@ -219,23 +237,86 @@ class KillfeedLayer(Layer):
         victim_name = victim.name if victim else "?"
 
         if killer and hasattr(killer, "team_id"):
-            display_team = self.ctx.raw_to_display_team(killer.team_id)
-            kr, kg, kb, _ = config.team_colors.get(display_team, (1, 1, 1, 1))
+            kr, kg, kb, _ = config.team_colors.get(
+                self.ctx.raw_to_display_team(killer.team_id), (1, 1, 1, 1))
         else:
             kr, kg, kb = 1, 1, 1
-
         if victim and hasattr(victim, "team_id"):
-            display_team = self.ctx.raw_to_display_team(victim.team_id)
-            vr, vg, vb, _ = config.team_colors.get(display_team, (1, 1, 1, 1))
+            vr, vg, vb, _ = config.team_colors.get(
+                self.ctx.raw_to_display_team(victim.team_id), (1, 1, 1, 1))
         else:
             vr, vg, vb = 1, 1, 1
+
+        label, icon_name = _DEATH_REASON.get(entry.death_reason, ("", ""))
+        icon_surface = self._icons.get(icon_name) if icon_name else None
+
+        return {
+            "killer_name": killer_name,
+            "killer_color": (kr, kg, kb),
+            "killer_ship": self._ship_names.get(entry.killer_id, ""),
+            "victim_name": victim_name,
+            "victim_color": (vr, vg, vb),
+            "victim_ship": self._ship_names.get(entry.victim_id, ""),
+            "label": label,
+            "icon_surface": icon_surface,
+        }
+
+    def _kill_layout(
+        self, cr: cairo.Context, entry: _FeedEntry, x_base: float, max_x: float,
+        font_size: float, icon_size: float,
+    ) -> int:
+        """Return number of line slots needed for a kill entry (1 or 2).
+
+        Wraps to 2 lines when killer + ship + icon + victim + ship overflows
+        the right panel; the wrap point is between icon and victim, matching
+        the natural visual break in '<killer> ICON <victim>'.
+        """
+        comps = self._kill_components(entry)
+        kr, kg, kb = comps["killer_color"]
+        vr, vg, vb = comps["victim_color"]
+
+        _, kw, _ = self.get_cached_text(cr, comps["killer_name"], font_size, True, kr, kg, kb)
+        ksw = 0.0
+        if comps["killer_ship"]:
+            _, ksw, _ = self.get_cached_text(
+                cr, f" ({comps['killer_ship']}) ", font_size * 0.85, False, 0.85, 0.85, 0.85)
+
+        if comps["icon_surface"]:
+            icon_w = icon_size + 4
+        elif comps["label"]:
+            _, icon_w, _ = self.get_cached_text(
+                cr, f" [{comps['label']}] ", font_size * 0.85, False, 0.8, 0.8, 0.8)
+        else:
+            _, icon_w, _ = self.get_cached_text(cr, " \u2715 ", font_size, False, 0.8, 0.8, 0.8)
+
+        _, vw, _ = self.get_cached_text(cr, comps["victim_name"], font_size, True, vr, vg, vb)
+        vsw = 0.0
+        if comps["victim_ship"]:
+            _, vsw, _ = self.get_cached_text(
+                cr, f" ({comps['victim_ship']})", font_size * 0.85, False, 0.85, 0.85, 0.85)
+
+        total = x_base + kw + ksw + 4 + icon_w + vw + vsw
+        return 2 if total > max_x else 1
+
+    def _render_kill(
+        self, cr: cairo.Context, x_base: float, y: float, alpha: float,
+        entry: _FeedEntry, font_size: float, icon_size: float,
+        line_h: float, max_x: float, n_lines: int,
+        player_lookup: dict,
+    ) -> None:
+        comps = self._kill_components(entry)
+        kr, kg, kb = comps["killer_color"]
+        vr, vg, vb = comps["victim_color"]
+        killer_ship = comps["killer_ship"]
+        victim_ship = comps["victim_ship"]
+        label = comps["label"]
+        icon_surface = comps["icon_surface"]
 
         cr.select_font_face(FONT_FAMILY, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
         cr.set_font_size(font_size)
 
-        # Killer name + ship
-        killer_ship = self._ship_names.get(entry.killer_id, "")
-        ext_k_w = self.draw_cached_text(cr, x_base, y, killer_name, kr, kg, kb,
+        # Killer name + ship on line 1
+        ext_k_w = self.draw_cached_text(cr, x_base, y, comps["killer_name"], kr, kg, kb,
                                         alpha=alpha, font_size=font_size, bold=True)
         if killer_ship:
             ship_text = f" ({killer_ship}) "
@@ -246,9 +327,6 @@ class KillfeedLayer(Layer):
             icon_x = x_base + ext_k_w + 4
 
         # Death reason icon or text
-        label, icon_name = _DEATH_REASON.get(entry.death_reason, ("", ""))
-        icon_surface = self._icons.get(icon_name) if icon_name else None
-
         if icon_surface:
             iw = icon_surface.get_width()
             ih = icon_surface.get_height()
@@ -270,35 +348,133 @@ class KillfeedLayer(Layer):
                                             alpha=alpha * 0.7, font_size=font_size, bold=False)
             after_icon_x = icon_x + ext_c_w
 
-        # Victim name + ship
-        ext_v_w = self.draw_cached_text(cr, after_icon_x, y, victim_name, vr, vg, vb,
-                                        alpha=alpha, font_size=font_size, bold=True)
-        victim_ship = self._ship_names.get(entry.victim_id, "")
-        if victim_ship:
-            ship_text_v = f" ({victim_ship})"
-            self.draw_cached_text(cr, after_icon_x + ext_v_w, y, ship_text_v, 0.85, 0.85, 0.85,
-                                  alpha=alpha * 0.7, font_size=font_size * 0.85, bold=False)
+        # Victim: same line if it fits, otherwise wrap to a continuation line
+        # with a leading arrow so the chain reads naturally across two lines.
+        if n_lines >= 2:
+            cont_x = x_base + 8 * self.ctx.scale
+            y2 = y + line_h
+            arrow_w = self.draw_cached_text(cr, cont_x, y2, "\u2192 ", 0.8, 0.8, 0.8,
+                                            alpha=alpha * 0.7, font_size=font_size, bold=False)
+            v_x = cont_x + arrow_w
+            ext_v_w = self.draw_cached_text(cr, v_x, y2, comps["victim_name"], vr, vg, vb,
+                                            alpha=alpha, font_size=font_size, bold=True)
+            if victim_ship:
+                ship_text_v = f" ({victim_ship})"
+                _, ship_w, _ = self.get_cached_text(
+                    cr, ship_text_v, font_size * 0.85, False, 0.85, 0.85, 0.85)
+                if v_x + ext_v_w + ship_w <= max_x:
+                    self.draw_cached_text(cr, v_x + ext_v_w, y2, ship_text_v, 0.85, 0.85, 0.85,
+                                          alpha=alpha * 0.7, font_size=font_size * 0.85, bold=False)
+        else:
+            ext_v_w = self.draw_cached_text(cr, after_icon_x, y, comps["victim_name"], vr, vg, vb,
+                                            alpha=alpha, font_size=font_size, bold=True)
+            if victim_ship:
+                ship_text_v = f" ({victim_ship})"
+                self.draw_cached_text(cr, after_icon_x + ext_v_w, y, ship_text_v, 0.85, 0.85, 0.85,
+                                      alpha=alpha * 0.7, font_size=font_size * 0.85, bold=False)
 
-    def _render_chat(
-        self, cr: cairo.Context, x_base: float, y: float, alpha: float,
-        entry: _FeedEntry, font_size: float,
-    ) -> None:
+    def _chat_meta(self, entry: _FeedEntry) -> tuple[tuple[float, float, float], str]:
+        """Return ((sender_r, sender_g, sender_b), channel_prefix) for an entry."""
         config = self.ctx.config
-
-        # Sender color: team-colored if known, else channel color
         if entry.sender_team >= 0:
             sr, sg, sb, _ = config.team_colors.get(entry.sender_team, (1, 1, 1, 1))
         else:
             sr, sg, sb = _CHANNEL_COLORS.get(entry.channel, (1, 1, 1))
 
-        # Channel prefix for team chat
         prefix = ""
         if entry.channel == "battle_team":
             prefix = "[T] "
         elif entry.channel == "battle_prebattle":
             prefix = "[P] "
+        return (sr, sg, sb), prefix
 
-        # Render: [prefix] name: message
+    def _chat_layout(
+        self, cr: cairo.Context, entry: _FeedEntry, x_base: float, max_x: float, font_size: float,
+    ) -> tuple[float, list[tuple[float, str]]]:
+        """Compute (cont_x, message_lines) for a chat entry.
+
+        Measures the prefix+sender+": " header to find where the message starts on
+        line one, then word-wraps the message; continuation lines hang under the
+        message (indented past the header) for visual continuity.
+        """
+        sender_color, prefix = self._chat_meta(entry)
+        sr, sg, sb = sender_color
+
+        x = x_base
+        if prefix:
+            _, w, _ = self.get_cached_text(cr, prefix, font_size * 0.85, False, 0.7, 0.7, 0.7)
+            x += w
+        _, w, _ = self.get_cached_text(cr, entry.sender_name, font_size, True, sr, sg, sb)
+        x += w
+        _, w, _ = self.get_cached_text(cr, ": ", font_size, False, 0.7, 0.7, 0.7)
+        x += w
+
+        msg_font_size = font_size * 0.9
+        cont_x = x_base + 8 * self.ctx.scale
+        lines = self._wrap_message(cr, entry.message, msg_font_size, x, cont_x, max_x)
+        return cont_x, lines
+
+    @staticmethod
+    def _wrap_message(
+        cr: cairo.Context, message: str, font_size: float,
+        first_line_x: float, cont_x: float, max_x: float,
+    ) -> list[tuple[float, str]]:
+        """Greedy word-wrap. Returns list of (x, text) per line.
+
+        Long words that don't fit on a continuation line are hard-broken per
+        character so URLs and unbroken strings still display.
+        """
+        cr.select_font_face(_font_for_text(message), cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+        cr.set_font_size(font_size)
+
+        def width(s: str) -> float:
+            return cr.text_extents(s).width
+
+        lines: list[tuple[float, str]] = []
+        cur_x = first_line_x
+        cur_text = ""
+
+        def flush() -> None:
+            nonlocal cur_text, cur_x
+            if cur_text:
+                lines.append((cur_x, cur_text))
+                cur_text = ""
+            cur_x = cont_x
+
+        for word in message.split(" "):
+            if not word:
+                continue
+            candidate = f"{cur_text} {word}" if cur_text else word
+            if cur_x + width(candidate) <= max_x:
+                cur_text = candidate
+                continue
+            flush()
+            if cont_x + width(word) <= max_x:
+                cur_text = word
+            else:
+                # Word is too long even alone — hard break per character
+                buf = ""
+                for ch in word:
+                    if cont_x + width(buf + ch) <= max_x:
+                        buf += ch
+                    else:
+                        if buf:
+                            lines.append((cont_x, buf))
+                        buf = ch
+                cur_text = buf
+        if cur_text:
+            lines.append((cur_x, cur_text))
+        return lines
+
+    def _render_chat(
+        self, cr: cairo.Context, x_base: float, y: float, alpha: float,
+        entry: _FeedEntry, font_size: float, line_h: float,
+        chat_layout: tuple[float, list[tuple[float, str]]],
+    ) -> None:
+        sender_color, prefix = self._chat_meta(entry)
+        sr, sg, sb = sender_color
+        _cont_x, message_lines = chat_layout
+
         x = x_base
         if prefix:
             x += self.draw_cached_text(cr, x, y, prefix, 0.7, 0.7, 0.7,
@@ -310,9 +486,7 @@ class KillfeedLayer(Layer):
         x += self.draw_cached_text(cr, x, y, ": ", 0.7, 0.7, 0.7,
                                    alpha=alpha * 0.8, font_size=font_size, bold=False)
 
-        # Truncate message to fit panel (smart truncation TBD; for now we
-        # rely on the cairo clip set up in render() to crop overflow).
-        msg = entry.message
-        # Simple truncation — could be smarter but good enough
-        self.draw_cached_text(cr, x, y, msg, 0.9, 0.9, 0.9,
-                              alpha=alpha * 0.9, font_size=font_size * 0.9, bold=False)
+        msg_font_size = font_size * 0.9
+        for i, (lx, ltext) in enumerate(message_lines):
+            self.draw_cached_text(cr, lx, y + i * line_h, ltext, 0.9, 0.9, 0.9,
+                                  alpha=alpha * 0.9, font_size=msg_font_size, bold=False)
