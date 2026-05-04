@@ -208,7 +208,7 @@ class KillfeedLayer(Layer):
         cr.clip()
 
         slots_used = 0
-        for (age, entry), (n_lines, chat_layout) in zip(visible, layouts):
+        for (age, entry), (n_lines, chat_layout) in zip(visible, layouts, strict=True):
             y = y_start + slots_used * line_h
 
             if entry.kind == "kill":
