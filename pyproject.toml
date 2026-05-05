@@ -6,7 +6,7 @@ license = { file = "LICENSE" }
 dependencies = [
     "wows-replay-parser>=0.1.2",
     "pycairo>=1.26",
-    "cairosvg>=2.7",
+    "cairosvg>=2.9.0",
     "discord.py>=2.7.1",
     "click>=8.3.2",
     "rich>=15.0.0",
