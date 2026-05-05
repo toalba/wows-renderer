@@ -20,7 +20,7 @@ dev = [
     "ruff>=0.15.12",
     "mypy>=1.10",
     "pytest>=9.0.3",
-    "Pillow>=10",
+    "Pillow>=12.2.0",
 ]
 
 [project.scripts]
