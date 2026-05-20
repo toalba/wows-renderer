@@ -29,6 +29,17 @@ BATCH_COOLDOWN_SECONDS = 600
 DISCORD_ATTACHMENT_LIMIT_MB = 25
 DISCORD_EMBED_TOTAL_LIMIT = 5500  # conservative; discord's hard limit is 6000
 
+# Render behavior flags exposed via the slash commands' `flags` param.
+KNOWN_FLAGS = frozenset({"anonymize"})
+
+
+def _parse_flags(raw: str | None) -> frozenset[str]:
+    """Parse a comma-separated flags string into a frozenset, dropping unknowns."""
+    if not raw:
+        return frozenset()
+    tokens = {t.strip().lower() for t in raw.split(",") if t.strip()}
+    return frozenset(tokens & KNOWN_FLAGS)
+
 
 def _batch_cooldown(interaction: discord.Interaction) -> app_commands.Cooldown | None:
     """Apply the 10-min cooldown only to authorized guilds; unauthorized users
@@ -149,6 +160,7 @@ class RenderCog(commands.Cog):
     @app_commands.describe(
         replay="Upload a .wowsreplay file",
         preset="Render preset (default: full)",
+        flags="Comma-separated flags. Available: anonymize",
     )
     @app_commands.choices(preset=[
         app_commands.Choice(name="Full — all layers + both panels", value="full"),
@@ -161,8 +173,10 @@ class RenderCog(commands.Cog):
         interaction: discord.Interaction,
         replay: discord.Attachment,
         preset: app_commands.Choice[str] | None = None,
+        flags: str | None = None,
     ) -> None:
         preset_value = preset.value if preset else "full"
+        flag_set = _parse_flags(flags)
 
         # Validate
         if not replay.filename.endswith(".wowsreplay"):
@@ -179,9 +193,10 @@ class RenderCog(commands.Cog):
             return
 
         log.info(
-            "/render start: user=%s guild=%s replay=%s size=%.1fMB preset=%s",
+            "/render start: user=%s guild=%s replay=%s size=%.1fMB preset=%s flags=%s",
             interaction.user.id, interaction.guild_id,
             replay.filename, replay.size / 1024 / 1024, preset_value,
+            sorted(flag_set) or "—",
         )
         await interaction.response.defer()
 
@@ -212,6 +227,7 @@ class RenderCog(commands.Cog):
                 fps=cfg.render_fps,
                 minimap_size=cfg.minimap_size,
                 panel_width=cfg.panel_width,
+                flags=flag_set,
             )
             pool, future = await self._submit_render(render_call)
 
@@ -384,6 +400,7 @@ class RenderCog(commands.Cog):
         preset_value: str,
         timeout: float,
         semaphore: asyncio.Semaphore,
+        flag_set: frozenset[str] = frozenset(),
     ) -> _BatchResult:
         """Submit + await a single batch item, bounded by the semaphore so that
         at most ``max_workers`` submissions are in flight at once. This prevents
@@ -403,6 +420,7 @@ class RenderCog(commands.Cog):
                 fps=cfg.render_fps,
                 minimap_size=cfg.minimap_size,
                 panel_width=cfg.panel_width,
+                flags=flag_set,
             )
             try:
                 _, future = await self._submit_render(render_call)
@@ -463,6 +481,7 @@ class RenderCog(commands.Cog):
         replay9="Replay or .zip",
         replay10="Replay or .zip",
         preset="Render preset (default: full)",
+        flags="Comma-separated flags. Available: anonymize",
     )
     @app_commands.choices(preset=[
         app_commands.Choice(name="Full — all layers + both panels", value="full"),
@@ -484,6 +503,7 @@ class RenderCog(commands.Cog):
         replay9: discord.Attachment | None = None,
         replay10: discord.Attachment | None = None,
         preset: app_commands.Choice[str] | None = None,
+        flags: str | None = None,
     ) -> None:
         # Guild authorization gate (cooldown factory already skipped tracking for unauthorized)
         if interaction.guild_id is None or interaction.guild_id not in self.config.authorized_guild_ids:
@@ -493,6 +513,7 @@ class RenderCog(commands.Cog):
             return
 
         preset_value = preset.value if preset else "full"
+        flag_set = _parse_flags(flags)
         raw = [replay1, replay2, replay3, replay4, replay5,
                replay6, replay7, replay8, replay9, replay10]
         attachments = [a for a in raw if a is not None]
@@ -519,9 +540,10 @@ class RenderCog(commands.Cog):
             return
 
         log.info(
-            "/render_batch start: user=%s guild=%s attachments=%d rejected=%d preset=%s",
+            "/render_batch start: user=%s guild=%s attachments=%d rejected=%d preset=%s flags=%s",
             interaction.user.id, interaction.guild_id,
             len(valid), len(rejected), preset_value,
+            sorted(flag_set) or "—",
         )
         await interaction.response.defer()
 
@@ -591,7 +613,7 @@ class RenderCog(commands.Cog):
             semaphore = asyncio.Semaphore(max(1, cfg.max_workers))
             tasks = [
                 asyncio.create_task(
-                    self._render_one_for_batch(item, preset_value, per_replay_timeout, semaphore),
+                    self._render_one_for_batch(item, preset_value, per_replay_timeout, semaphore, flag_set),
                 )
                 for item in items
             ]
@@ -735,6 +757,7 @@ class RenderCog(commands.Cog):
     @app_commands.describe(
         replay1="First replay (.wowsreplay)",
         replay2="Second replay (.wowsreplay, must be from the same match)",
+        flags="Comma-separated flags. Available: anonymize",
     )
     @app_commands.checks.dynamic_cooldown(_batch_cooldown)
     async def render_dual(
@@ -742,7 +765,9 @@ class RenderCog(commands.Cog):
         interaction: discord.Interaction,
         replay1: discord.Attachment,
         replay2: discord.Attachment,
+        flags: str | None = None,
     ) -> None:
+        flag_set = _parse_flags(flags)
         # Guild authorization gate (same allowlist as /render_batch).
         if interaction.guild_id is None or interaction.guild_id not in self.config.authorized_guild_ids:
             await interaction.response.send_message(
@@ -766,9 +791,10 @@ class RenderCog(commands.Cog):
                 return
 
         log.info(
-            "/render_dual start: user=%s guild=%s replay_a=%s replay_b=%s",
+            "/render_dual start: user=%s guild=%s replay_a=%s replay_b=%s flags=%s",
             interaction.user.id, interaction.guild_id,
             replay1.filename, replay2.filename,
+            sorted(flag_set) or "—",
         )
         await interaction.response.defer()
 
@@ -799,6 +825,7 @@ class RenderCog(commands.Cog):
                 fps=cfg.render_fps,
                 minimap_size=cfg.minimap_size,
                 panel_width=cfg.panel_width,
+                flags=flag_set,
             )
             pool, future = await self._submit_render(render_call)
 

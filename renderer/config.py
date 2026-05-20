@@ -41,6 +41,10 @@ class RenderConfig:
 
     hud_height: int = 24  # score bar above minimap
 
+    # Behavior flags (extensible). Currently recognised:
+    #   "anonymize" — hide player names above ships on the minimap
+    flags: frozenset[str] = field(default_factory=frozenset)
+
     def __post_init__(self) -> None:
         if self.minimap_size <= 0:
             raise ValueError(f"minimap_size must be > 0, got {self.minimap_size}")

@@ -25,6 +25,7 @@ def render_replay(
     fps: int = 20,
     minimap_size: int = 1080,
     panel_width: int = 420,
+    flags: frozenset[str] = frozenset(),
 ) -> tuple[str, float, dict[str, float], str, int]:
     """Parse and render a replay to mp4. Runs in a worker process.
 
@@ -105,6 +106,7 @@ def render_replay(
         panel_width=panel_width,
         left_panel_width=left_pw,
         right_panel_width=right_pw,
+        flags=flags,
     )
     renderer = MinimapRenderer(config)
 
@@ -189,6 +191,7 @@ def render_dual_replay(
     fps: int = 20,
     minimap_size: int = 1080,
     panel_width: int = 420,
+    flags: frozenset[str] = frozenset(),
 ) -> tuple[str, float, dict[str, float], str, int, str, list]:
     """Dual-perspective merged render of two replays from the same match.
 
@@ -254,6 +257,7 @@ def render_dual_replay(
         fps=fps,
         minimap_size=minimap_size,
         panel_width=panel_width,
+        flags=flags,
     )
     renderer = DualMinimapRenderer(config, replay=merged)
 

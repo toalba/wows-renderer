@@ -193,8 +193,8 @@ class ShipLayer(Layer):
                     if target_yaw is not None:
                         self._draw_heading_line(cr, px, py, target_yaw, team_color, alpha_mult)
 
-                # Player name
-                if player and is_detected:
+                # Player name (suppressed when the anonymize flag is set)
+                if player and is_detected and "anonymize" not in self.ctx.config.flags:
                     self._draw_name(cr, px, py, player.name, team_color, alpha_mult)
             else:
                 # Dead ship
