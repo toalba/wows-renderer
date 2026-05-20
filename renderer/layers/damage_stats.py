@@ -125,6 +125,14 @@ class DamageStatsLayer(Layer):
 
     def render(self, cr: cairo.Context, state: object, timestamp: float) -> None:
         if not self._active_sections:
+            # Still expose a sensible panel_bottom so downstream layers
+            # (ribbons) position themselves below the header instead of
+            # falling back to the top of the right panel.
+            header_ref = getattr(self, "_header_ref", None)
+            if header_ref is not None and header_ref.panel_bottom > 0:
+                self.panel_bottom = header_ref.panel_bottom
+            else:
+                self.panel_bottom = self.ctx.config.hud_height + self.Y_START * self.ctx.scale
             return
 
         # Accumulate deltas up to current timestamp
