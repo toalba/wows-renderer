@@ -58,6 +58,7 @@ def render_replay(
     from renderer.layers.ships import ShipLayer
     from renderer.layers.smoke import SmokeLayer
     from renderer.layers.team_roster import TeamRosterLayer
+    from renderer.layers.watermark import WatermarkLayer
     from renderer.layers.weather import WeatherLayer
 
     timings: dict[str, float] = {}
@@ -127,6 +128,8 @@ def render_replay(
         layers = map_layers[:-1] + [RightPanelLayer(), HudLayer()]
     else:
         layers = map_layers
+
+    layers.append(WatermarkLayer())
 
     for layer in layers:
         renderer.add_layer(layer)
@@ -214,6 +217,7 @@ def render_dual_replay(
     from renderer.layers.smoke import SmokeLayer
     from renderer.layers.team_roster import TeamRosterLayer
     from renderer.layers.trails import TrailLayer
+    from renderer.layers.watermark import WatermarkLayer
     from renderer.layers.weather import WeatherLayer
 
     timings: dict[str, float] = {}
@@ -261,7 +265,7 @@ def render_dual_replay(
         MapBackgroundLayer(), TeamRosterLayer(), CapturePointLayer(),
         WeatherLayer(), SmokeLayer(), ProjectileLayer(), AircraftLayer(),
         TrailLayer(), ShipLayer(), HealthBarLayer(), ConsumableLayer(),
-        KillfeedLayer(), HudLayer(),
+        KillfeedLayer(), HudLayer(), WatermarkLayer(),
     ]:
         renderer.add_layer(layer)
 

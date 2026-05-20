@@ -21,6 +21,7 @@ from renderer.layers.ships import ShipLayer
 from renderer.layers.smoke import SmokeLayer
 from renderer.layers.team_roster import TeamRosterLayer
 from renderer.layers.trails import TrailLayer
+from renderer.layers.watermark import WatermarkLayer
 from renderer.layers.weather import WeatherLayer
 
 REPLAY_A = sys.argv[1]
@@ -67,6 +68,7 @@ for L in [
     ConsumableLayer(),
     KillfeedLayer(),
     HudLayer(),
+    WatermarkLayer(),
 ]:
     renderer.add_layer(L)
 

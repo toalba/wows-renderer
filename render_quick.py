@@ -19,6 +19,7 @@ from renderer.layers.right_panel import RightPanelLayer
 from renderer.layers.ships import ShipLayer
 from renderer.layers.smoke import SmokeLayer
 from renderer.layers.team_roster import TeamRosterLayer
+from renderer.layers.watermark import WatermarkLayer
 from renderer.layers.weather import WeatherLayer
 
 if len(sys.argv) < 2:
@@ -48,7 +49,7 @@ config = RenderConfig(
 )
 renderer = MinimapRenderer(config)
 for L in [MapBackgroundLayer(), TeamRosterLayer(), CapturePointLayer(), WeatherLayer(), SmokeLayer(), ProjectileLayer(),
-          AircraftLayer(), ShipLayer(), HealthBarLayer(), ConsumableLayer(), RightPanelLayer(), HudLayer()]:
+          AircraftLayer(), ShipLayer(), HealthBarLayer(), ConsumableLayer(), RightPanelLayer(), HudLayer(), WatermarkLayer()]:
     renderer.add_layer(L)
 
 t0 = time.time()
