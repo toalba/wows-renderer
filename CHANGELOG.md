@@ -4,6 +4,36 @@ All notable changes to `wows-minimap-renderer` are documented here.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-05-21
+
+### Added
+
+#### Achievement Overlay
+- **AchievementLayer** — recording player's earned achievements render as persistent icons directly under the ribbon block on the right panel. Icons appear in first-appearance order, accumulate for the rest of the match, and wrap to additional rows when the panel runs out of width. Row consumes zero vertical space until the first achievement is earned. Filters to the recording player by `relation == 0 → account_id`. Unknown achievement IDs fall back to `gui/achievements/default.png`.
+- **achievements.json gamedata extraction** — new GameParams extractor maps achievement `id → uiName` (the icon-filename suffix). Written into the per-version cache during `ensure_version_cache`. `VersionedGamedata.achievements` cached_property reads it; old caches that pre-date the feature backfill on first read and write the JSON for next time, with an INFO log so the latency has a paper trail.
+- **`RibbonLayer.panel_bottom`** — exposed so the new layer can anchor under it, mirroring the same pattern used by `PlayerHeaderLayer` / `DamageStatsLayer`. Set in all three render exit paths.
+- **`RightPanelLayer(show_achievements=True)`** — new constructor flag; `AchievementLayer` wires both `_ribbons_ref` and `_dmg_stats_ref` so it stays anchored even when ribbons or damage stats are disabled.
+
+#### Other Renderer Improvements
+- **`/render flags` slash-command param** — anonymize toggle for the rendered video (hides player names/identifiers on request).
+- **Patrol-fighter zones** — distinct render in `capture_points.py` (visually separated from regular cap zones).
+- **Attribution watermark** — Rias_prpr credit watermark in the bottom-right corner.
+- **Right-panel text wrapping** — kill feed and chat entries wrap to fit the panel width instead of overflowing.
+- **`DamageStatsLayer.panel_bottom`** — propagated even when there's no data to render, so downstream layers (ribbons, achievements) anchor correctly.
+
+#### Dependencies
+- Bump Python base image: 3.12-slim → 3.14-slim (#10).
+- Bump cairosvg ≥2.9.0 (#12), pillow ≥12.2.0 (#14), click ≥8.3.3 (#11), ruff ≥0.15.12 (#15).
+
+### Fixed
+- **`AchievementLayer` fallback when `show_ribbons=False`** — previously anchored at `hud_height + 10` and would overlap the damage-stats widget. Now chains through `_dmg_stats_ref` the same way ribbons does.
+
+### Docs
+- **CLAUDE.md** — updated layer count from 16 → 18, added `achievements.py` to the file tree, numbered list, dual-perspective exclusion list, and the Layer System code example.
+- **Spec + plan** — `docs/superpowers/specs/2026-05-21-achievement-overlay-design.md` and `docs/superpowers/plans/2026-05-21-achievement-overlay.md` document the feature's design, implementation tasks, and the empirical verification that the icon-filename suffix lives in each GameParams Achievement entry's `uiName` field (98.4% on-disk match).
+
+## [0.2.0] — 2026-05-04
+
 ### Added
 
 #### Gamedata Cache System
