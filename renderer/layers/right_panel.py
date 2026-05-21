@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import cairo
 
+from renderer.layers.achievements import AchievementLayer
 from renderer.layers.base import Layer, SingleRenderContext
 from renderer.layers.damage_stats import DamageStatsLayer
 from renderer.layers.killfeed import KillfeedLayer
@@ -29,16 +30,19 @@ class RightPanelLayer(Layer):
         show_header: bool = True,
         show_damage: bool = True,
         show_ribbons: bool = True,
+        show_achievements: bool = True,
         show_killfeed: bool = True,
     ) -> None:
         self._show_header = show_header
         self._show_damage = show_damage
         self._show_ribbons = show_ribbons
+        self._show_achievements = show_achievements
         self._show_killfeed = show_killfeed
 
         self._header = PlayerHeaderLayer() if show_header else None
         self._damage = DamageStatsLayer() if show_damage else None
         self._ribbons = RibbonLayer() if show_ribbons else None
+        self._achievements = AchievementLayer() if show_achievements else None
         self._killfeed = KillfeedLayer() if show_killfeed else None
 
         # Wire cross-references
@@ -47,6 +51,8 @@ class RightPanelLayer(Layer):
             self._damage._header_ref = self._header
         if self._ribbons and self._damage:
             self._ribbons._dmg_stats_ref = self._damage
+        if self._achievements and self._ribbons:
+            self._achievements._ribbons_ref = self._ribbons
 
     def initialize(self, ctx: SingleRenderContext) -> None:
         super().initialize(ctx)
@@ -74,10 +80,21 @@ class RightPanelLayer(Layer):
             self._damage.render(cr, state, timestamp)
         if self._ribbons:
             self._ribbons.render(cr, state, timestamp)
+        if self._achievements:
+            self._achievements.render(cr, state, timestamp)
         if self._killfeed:
             self._killfeed.render(cr, state, timestamp)
 
         cr.restore()
 
     def _sub_layers(self):
-        return [layer for layer in (self._header, self._damage, self._ribbons, self._killfeed) if layer]
+        return [
+            layer for layer in (
+                self._header,
+                self._damage,
+                self._ribbons,
+                self._achievements,
+                self._killfeed,
+            )
+            if layer
+        ]
