@@ -33,113 +33,29 @@ gains a `panel_bottom` attribute so the new layer can anchor under it.
 
 ---
 
-## Task 1: Confirm achievement → icon naming convention
+## Task 1: Confirm achievement → icon naming convention (COMPLETED OUT OF BAND)
 
-The spec relies on the rule: GameParams entry name `Achievement_<UI_NAME>` → icon file `gui/achievements/icon_achievement_<UI_NAME>.png`. The icon filenames look unambiguous (`icon_achievement_AIRDEFENSEEXPERT.png`, `icon_achievement_BATTLE_HERO.png`), but the GameParams entry-name format has not been verified directly. Confirm before writing the extractor.
+**Result:** The original spec assumption (`Achievement_<UI_NAME>` prefix
+strip) was wrong. Empirically verified against `~/.cache/wows-gamedata/v12506899/`:
 
-**Files:**
-- Create: `wows-renderer/scripts/dump_achievement_schema.py`
-- Verify against: `~/.cache/wows-gamedata/v12506899/` (most recent cache)
+- 426 Achievement entries in GameParams.
+- Entry names follow `PCH<n>_<TitleCase>` (e.g. `PCH034_ScienceOfWinning1`),
+  not `Achievement_<UI_NAME>`.
+- The icon-filename suffix lives in the entry's **`uiName` field**
+  (e.g. `uiName='SCIENCE_OF_WINNING_ARSONIST'` →
+  `icon_achievement_SCIENCE_OF_WINNING_ARSONIST.png`).
+- Using `uiName` directly: **419/426 (98.4%) match an existing icon file**.
+- 2 entries have no `uiName` (skip them — no icon to render).
+- 5 entries (`SHADOW`, `SILENT_KILLER`, `DEFAULT`, `OBT_PARTICIPANT`,
+  `UNHARMED`) have a `uiName` but no on-disk icon — these fall back to
+  `default.png` at render time.
+- Achievement ids are u32 (range `[3254969264, 4293059504]`), matching
+  the `UINT32 achievementId` arg from `Avatar.onAchievementEarned`.
 
-- [ ] **Step 1: Write the discovery script**
-
-```python
-# wows-renderer/scripts/dump_achievement_schema.py
-"""One-shot helper: dump a few Achievement_* entries from a cached GameParams.
-
-Used to verify the spec's assumption that entry names follow
-'Achievement_<UI_NAME>' and that <UI_NAME> matches the
-'icon_achievement_<UI_NAME>.png' suffix in gui/achievements/.
-
-Run:  uv run python scripts/dump_achievement_schema.py
-"""
-from __future__ import annotations
-
-import sys
-from pathlib import Path
-
-from renderer.gameparams import load_gameparams_cached
-
-CACHE_ROOT = Path.home() / ".cache" / "wows-gamedata"
-
-
-def main() -> int:
-    versions = sorted(p for p in CACHE_ROOT.iterdir() if p.is_dir() and p.name.startswith("v"))
-    if not versions:
-        print(f"No cached versions under {CACHE_ROOT}", file=sys.stderr)
-        return 1
-    version_dir = versions[-1]
-    print(f"Using {version_dir.name}")
-    gp = load_gameparams_cached(version_dir)
-
-    icons_dir = version_dir / "data" / "gui" / "achievements"
-    icon_names = {
-        p.stem.removeprefix("icon_achievement_")
-        for p in icons_dir.glob("icon_achievement_*.png")
-    }
-
-    achievements = []
-    for name, obj in gp.items():
-        if not isinstance(obj, dict):
-            continue
-        ti = obj.get("typeinfo")
-        if isinstance(ti, dict) and ti.get("type") == "Achievement":
-            achievements.append((name, obj.get("id")))
-
-    print(f"Found {len(achievements)} Achievement_* entries.")
-    print(f"Found {len(icon_names)} icon files.")
-    print("First 10 entries (name, id):")
-    for name, aid in achievements[:10]:
-        suffix = name.removeprefix("Achievement_") if name.startswith("Achievement_") else None
-        has_icon = suffix in icon_names if suffix else False
-        print(f"  {name!r:50s} id={aid!r:>6}  suffix={suffix!r}  icon_exists={has_icon}")
-
-    missing_prefix = [n for n, _ in achievements if not n.startswith("Achievement_")]
-    print(f"\nEntries WITHOUT 'Achievement_' prefix: {len(missing_prefix)}")
-    for n in missing_prefix[:5]:
-        print(f"  {n!r}")
-
-    matched = sum(
-        1 for n, _ in achievements
-        if n.startswith("Achievement_") and n.removeprefix("Achievement_") in icon_names
-    )
-    print(f"\nMatched icon files: {matched}/{len(achievements)}")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-```
-
-- [ ] **Step 2: Run the script**
-
-Run (from `wows-renderer/`):
-```bash
-uv run python scripts/dump_achievement_schema.py
-```
-
-Expected output: a list of 10 sample entries, all with `Achievement_*` prefix and `icon_exists=True`, plus a high match ratio.
-
-**Decision point:**
-- If ≥95% of entries match → spec rule holds, proceed to Task 2.
-- If <95% match → before continuing, write a note in this plan above Task 2 stating the exact failure mode and update the extractor in Task 2 to handle it (e.g. case folding, alternate prefixes). The fallback already in the spec (use raw name) covers the long tail.
-
-- [ ] **Step 3: Delete the discovery script**
-
-```bash
-rm scripts/dump_achievement_schema.py
-```
-
-It's a one-shot helper and shouldn't ship.
-
-- [ ] **Step 4: Commit (verification log only — script deleted)**
-
-No code change to commit; capture the verification result as the body of a small docs note instead:
-
-```bash
-# No commit for this task. Record the script's output in your scratchpad
-# and proceed to Task 2.
-```
+The spec ([../specs/2026-05-21-achievement-overlay-design.md](../specs/2026-05-21-achievement-overlay-design.md))
+has been updated to reflect this. Task 2 below already uses the correct
+extraction logic — no further verification work needed. Skip directly to
+Task 2.
 
 ---
 
@@ -157,32 +73,50 @@ No code change to commit; capture the verification result as the body of a small
 
 Pure-Python, no fixtures: pass a synthetic GameParams dict through the
 extractor and assert the resulting id -> ui_name mapping.
+
+Real GameParams convention (verified against v12506899): entry name is
+'PCH<n>_<TitleCase>'; the icon-filename suffix lives in the entry's
+'uiName' field.
 """
 from __future__ import annotations
 
 from renderer.gamedata_cache import _extract_achievement_map
 
 
-def test_extract_achievement_map_strips_prefix():
+def test_extract_achievement_map_reads_ui_name():
     gp = {
-        "Achievement_AIRDEFENSEEXPERT": {
-            "id": 5001,
+        "PCH034_ScienceOfWinning1": {
+            "id": 4258456496,
+            "uiName": "SCIENCE_OF_WINNING_ARSONIST",
             "typeinfo": {"type": "Achievement"},
         },
-        "Achievement_KRAKEN": {
-            "id": 5002,
+        "PCH144_BD2_RANKS": {
+            "id": 4143113136,
+            "uiName": "BD2_RANKS",
             "typeinfo": {"type": "Achievement"},
         },
     }
     result = _extract_achievement_map(gp)
-    assert result == {"5001": "AIRDEFENSEEXPERT", "5002": "KRAKEN"}
+    assert result == {
+        "4258456496": "SCIENCE_OF_WINNING_ARSONIST",
+        "4143113136": "BD2_RANKS",
+    }
 
 
 def test_extract_achievement_map_ignores_other_types():
     gp = {
-        "Achievement_BATTLE_HERO": {"id": 1, "typeinfo": {"type": "Achievement"}},
-        "PASA001_Iowa": {"id": 9999, "typeinfo": {"type": "Ship"}},
-        "PASUM001": {"id": 8888, "typeinfo": {"type": "Modernization"}},
+        "PCH001_BattleHero": {
+            "id": 1, "uiName": "BATTLE_HERO",
+            "typeinfo": {"type": "Achievement"},
+        },
+        "PASA001_Iowa": {
+            "id": 9999, "uiName": "IOWA",
+            "typeinfo": {"type": "Ship"},
+        },
+        "PASUM001": {
+            "id": 8888,
+            "typeinfo": {"type": "Modernization"},
+        },
     }
     result = _extract_achievement_map(gp)
     assert result == {"1": "BATTLE_HERO"}
@@ -190,26 +124,46 @@ def test_extract_achievement_map_ignores_other_types():
 
 def test_extract_achievement_map_skips_entries_without_id():
     gp = {
-        "Achievement_NO_ID": {"typeinfo": {"type": "Achievement"}},
-        "Achievement_GOOD": {"id": 42, "typeinfo": {"type": "Achievement"}},
+        "PCH002_NoId": {
+            "uiName": "NO_ID",
+            "typeinfo": {"type": "Achievement"},
+        },
+        "PCH003_Good": {
+            "id": 42, "uiName": "GOOD",
+            "typeinfo": {"type": "Achievement"},
+        },
     }
     result = _extract_achievement_map(gp)
     assert result == {"42": "GOOD"}
 
 
-def test_extract_achievement_map_falls_back_to_raw_name_when_no_prefix():
-    """Entries without the 'Achievement_' prefix keep their full name."""
+def test_extract_achievement_map_skips_entries_without_ui_name():
+    """Entries with no uiName (~2/426 in real data) have no icon, so skip them."""
     gp = {
-        "WeirdAchievementName": {"id": 7, "typeinfo": {"type": "Achievement"}},
+        "PCH004_NoUiName": {
+            "id": 7,
+            "typeinfo": {"type": "Achievement"},
+        },
+        "PCH005_EmptyUiName": {
+            "id": 8, "uiName": "",
+            "typeinfo": {"type": "Achievement"},
+        },
+        "PCH006_Good": {
+            "id": 9, "uiName": "GOOD",
+            "typeinfo": {"type": "Achievement"},
+        },
     }
     result = _extract_achievement_map(gp)
-    assert result == {"7": "WeirdAchievementName"}
+    assert result == {"9": "GOOD"}
 
 
 def test_extract_achievement_map_handles_non_dict_values():
     """GameParams contains non-dict entries (lists, primitives); must skip cleanly."""
     gp = {
-        "Achievement_GOOD": {"id": 1, "typeinfo": {"type": "Achievement"}},
+        "PCH007_Good": {
+            "id": 1, "uiName": "GOOD",
+            "typeinfo": {"type": "Achievement"},
+        },
         "some_metadata_key": "not a dict",
         "another_key": ["list", "value"],
     }
@@ -233,29 +187,30 @@ Open `wows-renderer/renderer/gamedata_cache.py`. Just below `_extract_aircraft_i
 def _extract_achievement_map(gp: dict) -> dict[str, str]:
     """Extract achievement id → ui_name (icon filename suffix) from GameParams.
 
-    Icon files in ``gui/achievements/`` follow the convention
-    ``icon_achievement_<UI_NAME>.png`` where ``<UI_NAME>`` is the GameParams
-    entry name minus the leading ``Achievement_`` prefix (verified against
-    real GameParams + on-disk icon set during planning).
+    GameParams Achievement entries (``typeinfo.type == "Achievement"``) carry
+    a numeric ``id`` matching ``Avatar.onAchievementEarned``'s
+    ``UINT32 achievementId`` arg, and a ``uiName`` field whose value is the
+    suffix of the icon filename
+    (``gui/achievements/icon_achievement_<uiName>.png``).
+    Verified empirically against v12506899: 419/426 entries (98.4%) match an
+    on-disk icon by this rule; the missing ones fall back to ``default.png``
+    at render time.
 
-    Entries whose name does not start with ``Achievement_`` fall back to the
-    raw name. Entries missing an ``id`` field are skipped. Non-dict values
-    in the GameParams pickle are ignored.
+    Entries missing ``id`` or ``uiName`` are skipped — they cannot be
+    resolved to an icon. Non-dict values in the GameParams pickle are
+    ignored.
     """
     result: dict[str, str] = {}
-    for name, obj in gp.items():
+    for _name, obj in gp.items():
         if not isinstance(obj, dict):
             continue
         ti = obj.get("typeinfo")
         if not isinstance(ti, dict) or ti.get("type") != "Achievement":
             continue
         aid = obj.get("id")
-        if aid is None:
+        ui_name = obj.get("uiName")
+        if aid is None or not ui_name:
             continue
-        if name.startswith("Achievement_"):
-            ui_name = name[len("Achievement_"):]
-        else:
-            ui_name = name
         result[str(aid)] = ui_name
     return result
 ```
@@ -299,8 +254,14 @@ def test_write_achievements_json_creates_file(tmp_path: Path):
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     gp = {
-        "Achievement_FIRST": {"id": 1, "typeinfo": {"type": "Achievement"}},
-        "Achievement_SECOND": {"id": 2, "typeinfo": {"type": "Achievement"}},
+        "PCH001_First": {
+            "id": 1, "uiName": "FIRST",
+            "typeinfo": {"type": "Achievement"},
+        },
+        "PCH002_Second": {
+            "id": 2, "uiName": "SECOND",
+            "typeinfo": {"type": "Achievement"},
+        },
     }
     _write_achievements_json(gp, data_dir)
     out = data_dir / "achievements.json"
@@ -407,7 +368,11 @@ def test_achievements_loads_existing_json(tmp_path: Path):
 
 def test_achievements_backfills_from_gameparams_when_json_missing(tmp_path: Path):
     gp = {
-        "Achievement_BACKFILL": {"id": 99, "typeinfo": {"type": "Achievement"}},
+        "PCH999_Backfill": {
+            "id": 99,
+            "uiName": "BACKFILL",
+            "typeinfo": {"type": "Achievement"},
+        },
     }
     vgd = _make_versioned_gamedata(tmp_path, gp=gp)
     assert vgd.achievements == {99: "BACKFILL"}

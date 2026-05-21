@@ -117,12 +117,14 @@ panel rect for all sub-layers.
 ### Gamedata cache: `achievements.json`
 
 Achievement IDs in `AchievementEvent.achievement_id` come from
-`onAchievementEarned` and match the `id` field on GameParams entries of
-`typeinfo.type == "Achievement"`. Icon filenames are
-`icon_achievement_<NAME>.png` where `NAME` is the GameParams entry name
-minus the leading `Achievement_` prefix (verified against existing icons
-like `icon_achievement_AIRDEFENSEEXPERT.png`,
-`icon_achievement_BATTLE_HERO.png`).
+`onAchievementEarned` (`UINT32`) and match the `id` field on GameParams
+entries of `typeinfo.type == "Achievement"`. **Empirically verified**
+against the cached v12506899 GameParams: 426 Achievement entries, ids in
+u32 range `[3254969264, 4293059504]`. Entry names are `PCH<n>_<TitleCase>`
+(e.g. `PCH034_ScienceOfWinning1`) — NOT `Achievement_<UI_NAME>`. The icon
+filename suffix lives in the entry's `uiName` field (e.g.
+`uiName='SCIENCE_OF_WINNING_ARSONIST'` → `icon_achievement_SCIENCE_OF_WINNING_ARSONIST.png`).
+98.4% of entries match an existing icon by this rule.
 
 Mirror the existing `aircraft_icons.json` extraction pattern in
 `wows-renderer/renderer/gamedata_cache.py`:
@@ -133,13 +135,13 @@ Mirror the existing `aircraft_icons.json` extraction pattern in
        ti = obj.get("typeinfo")
        if ti and ti.get("type") == "Achievement":
            aid = obj.get("id")
-           if aid is not None and name.startswith("Achievement_"):
-               result[str(aid)] = name[len("Achievement_"):]
+           ui_name = obj.get("uiName")
+           if aid is not None and ui_name:
+               result[str(aid)] = ui_name
    ```
-   The exact prefix-strip rule will be verified against a real
-   GameParams dump during implementation (planning step in
-   writing-plans). If a small number of entries don't match the
-   `Achievement_*` pattern, fall back to using the raw name.
+   Entries missing `uiName` (2/426 in v12506899) are skipped — they have
+   no icon to render. Entries whose `uiName` doesn't match an on-disk icon
+   file (≤2% on current data) fall back to `default.png` at render time.
 2. In `ensure_version_cache`, after `ship_consumables.json` is written
    (~line 645), write `achievements.json`:
    ```
@@ -261,12 +263,11 @@ Unit-level checks worth adding:
 
 ## Risks
 
-- **Icon filename convention** (`Achievement_<NAME>` → `<NAME>`) is
-  inferred from sample filenames and not yet 100% verified against a
-  decoded GameParams Achievement_* entry. The implementation plan must
-  start by decoding GameParams locally and confirming, before writing
-  the extractor. Low risk — sample matches are unambiguous (e.g.
-  `Achievement_AIRDEFENSEEXPERT` → `icon_achievement_AIRDEFENSEEXPERT.png`).
+- **Icon filename convention** — verified empirically against
+  v12506899: 98.4% icon match using the entry's `uiName` field. The
+  remaining 1.6% (5 entries: SHADOW, SILENT_KILLER, DEFAULT,
+  OBT_PARTICIPANT, UNHARMED) appear to be retired achievements with no
+  on-disk icon — they fall back to `default.png`.
 - **No coverage for other Achievement-emitting paths.** The
   `AchievementsComponent.def` on `Account` defines dev/admin methods
   (`dev_earnAchievement`, `sendAchievements`) — not used in production
