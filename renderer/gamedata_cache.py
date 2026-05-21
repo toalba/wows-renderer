@@ -339,6 +339,18 @@ def _extract_achievement_map(gp: dict) -> dict[str, str]:
     return result
 
 
+def _write_achievements_json(gp: dict, data_dir: Path) -> Path:
+    """Extract achievement map from GameParams and write it under data_dir.
+
+    Returns the written path. Always writes a file — even when the map is
+    empty — so the on-disk schema is consistent across patches.
+    """
+    achievements = _extract_achievement_map(gp)
+    out = data_dir / "achievements.json"
+    out.write_text(json.dumps(achievements, separators=(",", ":")))
+    return out
+
+
 # ── VersionedGamedata ──────────────────────────────────────────────
 
 
@@ -674,6 +686,9 @@ def ensure_version_cache(
             {str(k): v for k, v in ship_consumables.items()},
             separators=(",", ":"),
         ))
+
+        # Achievement id -> ui_name map for the achievement overlay layer.
+        _write_achievements_json(gp, data_dir)
 
         n_split = write_split_subset(gp, data_dir, _SPLIT_TYPES_FOR_CACHE)
         log.info("Wrote %d split files (Modernization + Crew + Drop)", n_split)

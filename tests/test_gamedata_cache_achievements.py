@@ -9,7 +9,10 @@ Real GameParams convention (verified against v12506899): entry name is
 """
 from __future__ import annotations
 
-from renderer.gamedata_cache import _extract_achievement_map
+import json
+from pathlib import Path
+
+from renderer.gamedata_cache import _extract_achievement_map, _write_achievements_json
 
 
 def test_extract_achievement_map_reads_ui_name():
@@ -98,3 +101,32 @@ def test_extract_achievement_map_handles_non_dict_values():
     }
     result = _extract_achievement_map(gp)
     assert result == {"1": "GOOD"}
+
+
+def test_write_achievements_json_creates_file(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    gp = {
+        "PCH001_First": {
+            "id": 1, "uiName": "FIRST",
+            "typeinfo": {"type": "Achievement"},
+        },
+        "PCH002_Second": {
+            "id": 2, "uiName": "SECOND",
+            "typeinfo": {"type": "Achievement"},
+        },
+    }
+    _write_achievements_json(gp, data_dir)
+    out = data_dir / "achievements.json"
+    assert out.exists()
+    loaded = json.loads(out.read_text())
+    assert loaded == {"1": "FIRST", "2": "SECOND"}
+
+
+def test_write_achievements_json_writes_empty_dict_for_empty_input(tmp_path: Path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    _write_achievements_json({}, data_dir)
+    out = data_dir / "achievements.json"
+    assert out.exists()
+    assert json.loads(out.read_text()) == {}
