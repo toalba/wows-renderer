@@ -54,6 +54,11 @@ class CapturePointLayer(Layer):
     DEFAULT_RADIUS = 75.0
     # Zone types to skip rendering (wards/ASW zones from carrier consumables)
     _SKIP_TYPES = {12}
+    # Patrol-fighter zones: dashed thin ring + faint team-colored fill, no label.
+    PATROL_RING_ALPHA = 0.55
+    PATROL_FILL_ALPHA = 0.06
+    PATROL_LINE_WIDTH = 1.5
+    PATROL_DASH = (4.0, 4.0)
 
     def initialize(self, ctx: BaseRenderContext) -> None:
         super().initialize(ctx)
@@ -66,6 +71,15 @@ class CapturePointLayer(Layer):
         self._buff_drops: dict[int, str] = {}  # paramsId -> marker name
         self._zone_buff_type: dict[int, str] = {}  # zone_eid -> marker name
         self._load_buff_data(ctx)
+        # Patrol-fighter centered marker — in-game "fighter ward" icon (neutral).
+        self._patrol_icon: cairo.ImageSurface | None = None
+        ward_png = (ctx.config.effective_gamedata_path / "gui" / "battle_hud"
+                    / "markers" / "ward_fighters" / "ward.png")
+        if ward_png.exists():
+            try:
+                self._patrol_icon = cairo.ImageSurface.create_from_png(str(ward_png))
+            except Exception:
+                pass
 
     def _build_label_order(self, ctx: BaseRenderContext) -> None:
         """Assign cap letters by scanning states at a few timestamps.
@@ -86,6 +100,9 @@ class CapturePointLayer(Layer):
                 # Skip non-capture zones (buffs, wards) via CapturePointState.point_type
                 if cap.point_type in self._SKIP_TYPES or cap.point_type == 6:
                     continue
+                # Skip patrol-fighter / consumable zones — they never get letters.
+                if cap.point_index < 0 and cap.buoy_visual_id == 0:
+                    continue
                 timeline = zone_positions.get(eid)
                 if not timeline:
                     # No recoverable position for this zone — skip.
@@ -97,8 +114,7 @@ class CapturePointLayer(Layer):
                         x = tx
                     else:
                         break
-                idx = cap.point_index if cap.point_index >= 0 else 999
-                seen[eid] = (x, idx)
+                seen[eid] = (x, cap.point_index)
 
         # Sort by point_index first, then x position
         self._cap_label_order = sorted(seen, key=lambda e: (seen[e][1], seen[e][0]))
@@ -215,13 +231,22 @@ class CapturePointLayer(Layer):
                 self._render_buff(cr, px, py, eid, cap, team_colors)
                 continue
 
+            pixel_radius = radius_world / map_size * mm
+
+            # Patrol-fighter / consumable zones: server sends point_index=-1,
+            # buoy_visual_id=0, team_id>=0, no timer. Both signals required —
+            # real cap zones (incl. Arms Race) always have buoy_visual_id != 0,
+            # so this won't misclassify a cap that briefly arrives with no index.
+            if cap.point_index < 0 and cap.buoy_visual_id == 0:
+                self._render_patrol_zone(cr, px, py, pixel_radius, cap, team_colors)
+                continue
+
             # Don't render capture zones that aren't active yet (e.g. Arms Race
             # main zone before the timer expires). is_enabled is set by the server
             # when the zone becomes capturable.
             if not cap.is_enabled and cap.progress < 0.01 and cap.team_id < 0:
                 continue
 
-            pixel_radius = radius_world / map_size * mm
             rendered_caps.append(eid)
 
             # Determine owner color
@@ -329,6 +354,40 @@ class CapturePointLayer(Layer):
                 wx, wz = pos[0], pos[2]
             px, py = self.ctx.world_to_pixel(wx, wz)
             self._render_buff(cr, px, py, eid, bz, team_colors)
+
+    def _render_patrol_zone(
+        self, cr: cairo.Context, px: float, py: float, pixel_radius: float,
+        cap, team_colors: dict,
+    ) -> None:
+        """Dashed team-colored ring for CV/catapult patrol fighters."""
+        r, g, b = self.NEUTRAL_COLOR
+        display_team = -1
+        if cap.team_id >= 0:
+            display_team = self.ctx.raw_to_display_team(cap.team_id)
+            if display_team in team_colors:
+                r, g, b, _ = team_colors[display_team]
+        cr.new_sub_path()
+        cr.arc(px, py, pixel_radius, 0, 2 * math.pi)
+        cr.set_source_rgba(r, g, b, self.PATROL_FILL_ALPHA)
+        cr.fill()
+        cr.new_sub_path()
+        cr.arc(px, py, pixel_radius, 0, 2 * math.pi)
+        cr.set_source_rgba(r, g, b, self.PATROL_RING_ALPHA)
+        cr.set_line_width(self.PATROL_LINE_WIDTH * self.ctx.scale)
+        cr.set_dash(list(self.PATROL_DASH))
+        cr.stroke()
+        cr.set_dash([])
+
+        icon = self._patrol_icon
+        if icon is not None:
+            w, h = icon.get_width(), icon.get_height()
+            s = self.ctx.scale * 0.6
+            cr.save()
+            cr.translate(px, py)
+            cr.scale(s, s)
+            cr.set_source_surface(icon, -w / 2, -h / 2)
+            cr.paint()
+            cr.restore()
 
     def _render_buff(
         self, cr: cairo.Context, px: float, py: float,
