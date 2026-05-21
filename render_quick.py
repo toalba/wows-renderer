@@ -48,8 +48,12 @@ config = RenderConfig(
     panel_width=420,
 )
 renderer = MinimapRenderer(config)
-for L in [MapBackgroundLayer(), TeamRosterLayer(), CapturePointLayer(), WeatherLayer(), SmokeLayer(), ProjectileLayer(),
-          AircraftLayer(), ShipLayer(), HealthBarLayer(), ConsumableLayer(), RightPanelLayer(), HudLayer(), WatermarkLayer()]:
+for L in [
+    MapBackgroundLayer(), TeamRosterLayer(), CapturePointLayer(),
+    WeatherLayer(), SmokeLayer(), ProjectileLayer(), AircraftLayer(),
+    ShipLayer(), HealthBarLayer(), ConsumableLayer(), RightPanelLayer(),
+    HudLayer(), WatermarkLayer(),
+]:
     renderer.add_layer(L)
 
 t0 = time.time()
