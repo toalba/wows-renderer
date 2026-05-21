@@ -110,13 +110,19 @@ class AchievementLayer(Layer):
                 self._seen_order.append(aid)
             self._tl_idx += 1
 
-        # Anchor under ribbons (or fall back to a sane default).
+        # Anchor under ribbons, else damage stats, else fall back to the
+        # top of the right panel. Mirrors RibbonLayer's own chain so the
+        # layer behaves sanely when show_ribbons=False is set.
         s = self.ctx.scale
         ribbons_ref = getattr(self, "_ribbons_ref", None)
         if ribbons_ref is not None and ribbons_ref.panel_bottom > 0:
             y_start = ribbons_ref.panel_bottom + self.Y_PAD * s
         else:
-            y_start = self.ctx.config.hud_height + 10
+            dmg_ref = getattr(self, "_dmg_stats_ref", None)
+            if dmg_ref is not None and dmg_ref.panel_bottom > 0:
+                y_start = dmg_ref.panel_bottom + self.Y_PAD * s
+            else:
+                y_start = self.ctx.config.hud_height + 10
 
         if not self._seen_order:
             # No rows drawn — expose y_start so any future downstream

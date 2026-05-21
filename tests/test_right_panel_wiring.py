@@ -32,6 +32,16 @@ def test_right_panel_no_ribbons_means_no_achievement_wiring():
         assert getattr(panel._achievements, "_ribbons_ref", None) is None
 
 
+def test_right_panel_wires_dmg_stats_ref_for_achievement_fallback():
+    """When ribbons are disabled, achievements anchor under damage stats."""
+    from renderer.layers.damage_stats import DamageStatsLayer
+    panel = RightPanelLayer(show_ribbons=False)
+    assert panel._achievements is not None
+    # Even with no ribbons, damage stats is the fallback anchor.
+    assert panel._achievements._dmg_stats_ref is panel._damage
+    assert isinstance(panel._achievements._dmg_stats_ref, DamageStatsLayer)
+
+
 def test_right_panel_sub_layers_includes_achievements():
     panel = RightPanelLayer()
     sub_layers = panel._sub_layers()

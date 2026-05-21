@@ -53,6 +53,8 @@ class RightPanelLayer(Layer):
             self._ribbons._dmg_stats_ref = self._damage
         if self._achievements and self._ribbons:
             self._achievements._ribbons_ref = self._ribbons
+        if self._achievements and self._damage:
+            self._achievements._dmg_stats_ref = self._damage
 
     def initialize(self, ctx: SingleRenderContext) -> None:
         super().initialize(ctx)
