@@ -88,6 +88,7 @@ class RibbonLayer(Layer):
     SUB_HEIGHT = 18      # display height for sub-ribbons
     GAP = 3              # gap between items
     COUNT_FONT_SIZE = 10
+    panel_bottom: float = 0.0
 
     def initialize(self, ctx: SingleRenderContext) -> None:
         super().initialize(ctx)
@@ -115,6 +116,7 @@ class RibbonLayer(Layer):
 
     def render(self, cr: cairo.Context, state: object, timestamp: float) -> None:
         if not self._timeline:
+            self.panel_bottom = self.ctx.config.hud_height + 10
             return
 
         # Accumulate and track first-appearance order of parent groups
@@ -130,6 +132,14 @@ class RibbonLayer(Layer):
             self._tl_idx += 1
 
         if not self._counts:
+            # Still expose a sensible panel_bottom so AchievementLayer
+            # can anchor at the would-be start position.
+            s_local = self.ctx.scale
+            dmg_ref = getattr(self, "_dmg_stats_ref", None)
+            if dmg_ref is not None and dmg_ref.panel_bottom > 0:
+                self.panel_bottom = dmg_ref.panel_bottom + 6 * s_local
+            else:
+                self.panel_bottom = self.ctx.config.hud_height + 10
             return
 
         config = self.ctx.config
@@ -197,6 +207,10 @@ class RibbonLayer(Layer):
                     sx += sw + gap
 
             x += col_w + gap * 2
+
+        # Record bottom of the last drawn row for downstream layers
+        # (AchievementLayer anchors directly under this).
+        self.panel_bottom = y_row + row_max_h
 
         cr.restore()
 
