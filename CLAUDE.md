@@ -38,8 +38,9 @@ wows-minimap-renderer/
 │   │   ├── player_header.py   # Right panel: self-player header with ship silhouette HP bar
 │   │   ├── damage_stats.py    # Right panel: self-player damage dealt/received/spotted/potential breakdown
 │   │   ├── ribbons.py         # Right panel: recording player ribbon counters (grouped, accumulating)
+│   │   ├── achievements.py    # Right panel: recording player achievement icons (under ribbons, accumulating)
 │   │   ├── killfeed.py        # Right panel: kill feed + chat messages, bottom-up
-│   │   ├── right_panel.py     # Right panel composite: player_header + damage_stats + ribbons + killfeed
+│   │   ├── right_panel.py     # Right panel composite: player_header + damage_stats + ribbons + achievements + killfeed
 │   │   └── hud.py             # Score bar, timer, TTW pills, 1-kill-swing indicator, match result
 │   ├── video.py               # PyAVPipe + FrameWriter (async background thread offloads stream.encode())
 │   └── assets.py              # Asset loading (minimaps, ship icons, consumable icons, ribbons, projectiles, ships.json, map_sizes, ship_consumables)
@@ -61,7 +62,7 @@ wows-minimap-renderer/
 
 ## Features
 
-### Rendering Layers (16 total, composited bottom to top)
+### Rendering Layers (18 total, composited bottom to top)
 1. **map_bg** — Water texture + minimap PNG + grid + labels (pre-rendered static cache, single paint per frame)
 2. **team_roster** — Left panel with both teams: class icon, player name, ship name, kills (incremental), damage (incremental), HP bar, consumable icons with active/cooldown timers and charge counts
 3. **capture_points** — Cap circles with progress arcs, team colors, contested indicators, A-H labels, Arms Race buff zones
@@ -76,9 +77,10 @@ wows-minimap-renderer/
 12. **player_header** — Right panel top: self-player header with ship silhouette HP bar, healable segment, clan tag + name
 13. **damage_stats** — Right panel: self-player damage breakdown (dealt by weapon type, spotting, potential) using DamageReceivedStatEvent
 14. **ribbons** — Right panel: recording player's ribbon counters in grouped layout (main + sub-ribbons), accumulating per frame, first-appearance order
-15. **killfeed** — Right panel: recent kills with frag icons, killer/victim names + ships, interleaved with chat messages (team chat prefixed `[T]`, pre-battle `[P]`), bottom-anchored growing upward
-16. **right_panel** — Composite layer: player_header + damage_stats + ribbons + killfeed with clipping
-17. **hud** — Score bar with projected winner highlight, MM:SS timer, TTW pills (diamond icon, winner highlighting), "1 KILL DECIDES" indicator (team-colored glow), match result overlay, clan battle clan tags (with clan colors)
+15. **achievements** — Right panel: recording player's earned achievement icons in first-appearance order, anchored under the ribbon block, persistent for the rest of the match. Row consumes zero vertical space until the first achievement is earned. Unknown IDs fall back to `gui/achievements/default.png`.
+16. **killfeed** — Right panel: recent kills with frag icons, killer/victim names + ships, interleaved with chat messages (team chat prefixed `[T]`, pre-battle `[P]`), bottom-anchored growing upward
+17. **right_panel** — Composite layer: player_header + damage_stats + ribbons + achievements + killfeed with clipping
+18. **hud** — Score bar with projected winner highlight, MM:SS timer, TTW pills (diamond icon, winner highlighting), "1 KILL DECIDES" indicator (team-colored glow), match result overlay, clan battle clan tags (with clan colors)
 
 Note: layer 4 (`weather`) and layer 6 (`trails`) are omitted in `render_quick.py` — see the actual layer list in that script for the canonical ordering.
 
@@ -249,7 +251,7 @@ output.mp4
 
 ## Dual Perspective Rendering
 
-Entry point: `python render_dual.py a.wowsreplay b.wowsreplay output.mp4`. Both replays must come from the same match (parser's `merge_replays` validates `arenaUniqueId` and map_name). `DualMinimapRenderer` consumes the `MergedReplay` identically to a `ParsedReplay` via the `ReplaySource` protocol. Drops self-centric layers (`player_header`, `damage_stats`, `ribbons`, `killfeed`, `right_panel`). Neutral observer mode: no Trap-5 perspective swap — team 0 = green/left, team 1 = red/right regardless of either recorder's side. `division_mates` is empty (no recording player in merged view). Validated end-to-end on real paired replays.
+Entry point: `python render_dual.py a.wowsreplay b.wowsreplay output.mp4`. Both replays must come from the same match (parser's `merge_replays` validates `arenaUniqueId` and map_name). `DualMinimapRenderer` consumes the `MergedReplay` identically to a `ParsedReplay` via the `ReplaySource` protocol. Drops self-centric layers (`player_header`, `damage_stats`, `ribbons`, `achievements`, `killfeed`, `right_panel`). Neutral observer mode: no Trap-5 perspective swap — team 0 = green/left, team 1 = red/right regardless of either recorder's side. `division_mates` is empty (no recording player in merged view). Validated end-to-end on real paired replays.
 
 ## Layer System
 
@@ -267,7 +269,7 @@ renderer.add_layer(AircraftLayer())            # CV squadrons + airstrikes
 renderer.add_layer(ShipLayer())                # Ship icons + names
 renderer.add_layer(HealthBarLayer())           # HP bars + ship names
 renderer.add_layer(ConsumableLayer())          # Icons + radar/hydro circles
-renderer.add_layer(RightPanelLayer())          # Right panel: header + damage + ribbons + killfeed
+renderer.add_layer(RightPanelLayer())          # Right panel: header + damage + ribbons + achievements + killfeed
 renderer.add_layer(HudLayer())                 # Top: scores, timer, TTW
 ```
 

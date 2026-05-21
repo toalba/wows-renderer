@@ -443,7 +443,13 @@ class VersionedGamedata:
             except (ValueError, OSError):
                 log.warning("Corrupt achievements.json at %s — backfilling", path)
 
-        # Backfill from GameParams pickle.
+        # Backfill from GameParams pickle (forces the ~15MB pickle load on
+        # pre-feature caches; log so the latency has a paper trail in
+        # production logs).
+        log.info(
+            "Backfilling achievements.json from GameParams pickle at %s",
+            path,
+        )
         try:
             gp = self.gameparams
         except (FileNotFoundError, OSError):
