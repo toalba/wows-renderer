@@ -12,7 +12,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from renderer.gamedata_cache import _extract_achievement_map, _write_achievements_json
+from renderer.gamedata_cache import (
+    VersionedGamedata,
+    _extract_achievement_map,
+    _write_achievements_json,
+)
 
 
 def test_extract_achievement_map_reads_ui_name():
@@ -130,3 +134,54 @@ def test_write_achievements_json_writes_empty_dict_for_empty_input(tmp_path: Pat
     out = data_dir / "achievements.json"
     assert out.exists()
     assert json.loads(out.read_text()) == {}
+
+
+def _make_versioned_gamedata(tmp_path: Path, gp: dict | None = None) -> VersionedGamedata:
+    """Build a VersionedGamedata pointing at a tmp dir.
+
+    If gp is supplied it's used as the pre-loaded gameparams dict (no pickle
+    file needed). Otherwise the caller is responsible for setting up the
+    pickle on disk.
+    """
+    (tmp_path / "data").mkdir(parents=True, exist_ok=True)
+    return VersionedGamedata(
+        version_dir=tmp_path,
+        build_id="test",
+        _gameparams=gp,
+    )
+
+
+def test_achievements_loads_existing_json(tmp_path: Path):
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "achievements.json").write_text(
+        json.dumps({"1": "FIRST", "2": "SECOND"})
+    )
+    vgd = _make_versioned_gamedata(tmp_path, gp={})  # gp irrelevant — file present
+    assert vgd.achievements == {1: "FIRST", 2: "SECOND"}
+
+
+def test_achievements_backfills_from_gameparams_when_json_missing(tmp_path: Path):
+    gp = {
+        "PCH999_Backfill": {
+            "id": 99,
+            "uiName": "BACKFILL",
+            "typeinfo": {"type": "Achievement"},
+        },
+    }
+    vgd = _make_versioned_gamedata(tmp_path, gp=gp)
+    assert vgd.achievements == {99: "BACKFILL"}
+    # Backfill should have written the file for future loads.
+    out = tmp_path / "data" / "achievements.json"
+    assert out.exists()
+    assert json.loads(out.read_text()) == {"99": "BACKFILL"}
+
+
+def test_achievements_returns_empty_dict_when_backfill_fails(tmp_path: Path, monkeypatch):
+    """If the JSON is missing AND we can't access GameParams, return {}."""
+    vgd = _make_versioned_gamedata(tmp_path, gp=None)
+
+    def _boom(self):  # noqa: ANN001
+        raise FileNotFoundError("no pickle here")
+
+    monkeypatch.setattr(VersionedGamedata, "gameparams", property(_boom))
+    assert vgd.achievements == {}

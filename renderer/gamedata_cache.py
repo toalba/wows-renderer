@@ -425,6 +425,42 @@ class VersionedGamedata:
         return {int(k): v for k, v in _extract_aircraft_icon_map(self.gameparams).items()}
 
     @cached_property
+    def achievements(self) -> dict[int, str]:
+        """Achievement id → ui_name (icon filename suffix).
+
+        Prefers ``data/achievements.json`` if present (written during cache
+        population, see :func:`_write_achievements_json`). Falls back to
+        backfilling from the lazy-loaded GameParams pickle for caches that
+        pre-date the achievement-overlay feature; the backfill also writes
+        the JSON so future loads hit disk. Returns an empty dict if neither
+        source is available.
+        """
+        path = self.version_dir / "data" / "achievements.json"
+        if path.exists():
+            try:
+                raw = json.loads(path.read_text())
+                return {int(k): v for k, v in raw.items()}
+            except (ValueError, OSError):
+                log.warning("Corrupt achievements.json at %s — backfilling", path)
+
+        # Backfill from GameParams pickle.
+        try:
+            gp = self.gameparams
+        except (FileNotFoundError, OSError):
+            return {}
+        raw = _extract_achievement_map(gp)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(raw, separators=(",", ":")))
+        except OSError:
+            log.debug(
+                "Could not write backfill achievements.json at %s",
+                path,
+                exc_info=True,
+            )
+        return {int(k): v for k, v in raw.items()}
+
+    @cached_property
     def modernizations(self) -> dict[int, dict]:
         """Modernization GameParams ID → entity dict (with modifiers)."""
         result: dict[int, dict] = {}
