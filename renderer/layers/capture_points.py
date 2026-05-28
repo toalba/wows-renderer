@@ -45,7 +45,6 @@ class CapturePointLayer(Layer):
     """
 
     NEUTRAL_COLOR = (0.7, 0.7, 0.7)
-    CONTESTED_COLOR = (1.0, 0.85, 0.0)
     BUFF_ALPHA = 0.25
     BUFF_BORDER_ALPHA = 0.5
     BUFF_RADIUS_PX = 8.0  # small fixed-size marker for buffs at 760px ref
@@ -302,7 +301,7 @@ class CapturePointLayer(Layer):
             if cap_active and cap.both_inside:
                 cr.new_sub_path()
                 cr.arc(px, py, pixel_radius + 3, 0, 2 * math.pi)
-                yr, yg, yb = self.CONTESTED_COLOR
+                yr, yg, yb = config.contested_color
                 cr.set_source_rgba(yr, yg, yb, 0.7)
                 cr.set_line_width(2.0)
                 cr.set_dash([6, 4])

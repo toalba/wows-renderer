@@ -38,6 +38,14 @@ class RenderConfig:
     })
     self_color: tuple[float, float, float, float] = (1.0, 1.0, 1.0, 1.0)  # White (own ship)
     division_color: tuple[float, float, float, float] = (1.0, 0.84, 0.0, 1.0)  # Gold yellow (division mates)
+    contested_color: tuple[float, float, float] = (1.0, 0.85, 0.0)  # Amber by default; theme-overridable.
+
+    # Theme name from renderer.themes.THEMES. ALWAYS overwrites
+    # team_colors / self_color / division_color / contested_color at
+    # __post_init__ time, even for "default" — so any explicit
+    # *_color= kwargs on RenderConfig() are discarded. Set custom
+    # palettes by adding to the THEMES registry, not by overriding here.
+    theme: str = "default"
 
     hud_height: int = 24  # score bar above minimap
 
@@ -64,6 +72,18 @@ class RenderConfig:
             raise ValueError(f"trail_length must be >= 0, got {self.trail_length}")
         if not isinstance(self.gamedata_path, Path):
             self.gamedata_path = Path(self.gamedata_path)
+
+        # Theme resolution — overwrites palette fields with the theme's
+        # values. A non-default theme always wins over explicit colors
+        # passed to RenderConfig() (nothing in the codebase does both).
+        from renderer.themes import THEMES
+        if self.theme not in THEMES:
+            raise ValueError(f"Unknown theme: {self.theme!r} (known: {sorted(THEMES)})")
+        t = THEMES[self.theme]
+        self.team_colors = dict(t.team_colors)
+        self.self_color = t.self_color
+        self.division_color = t.division_color
+        self.contested_color = t.contested_color
 
     @property
     def effective_gamedata_path(self) -> Path:
