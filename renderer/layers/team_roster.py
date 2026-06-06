@@ -302,33 +302,35 @@ class TeamRosterLayer(Layer):
         self._kills: dict[int, int] = {}
         self._kill_idx: int = 0
 
-        # Damage dealt from DamageEvents (attacker-attributed)
-        # For the self player, use server-authoritative receiveDamageStat
-        # instead of receiveDamagesOnShip (which undercounts fire/flood/DoT).
-        self._self_vehicle_eid: int | None = None
-        for p in ctx.player_lookup.values():
-            if p.relation == 0:
-                self._self_vehicle_eid = p.entity_id
-                break
+        # Damage dealt. Recording players have server-authoritative
+        # receiveDamageStat events (includes fire/flood/DoT, which
+        # receiveDamagesOnShip undercounts); everyone else is attacker-
+        # attributed from receiveDamagesOnShip. A merged dual replay has TWO
+        # recorders (one per perspective), each carrying its own stat events
+        # tagged with its own entity_id — so attribute by the event's
+        # entity_id rather than a single "self", giving both columns the same
+        # authoritative source and making them comparable.
+        self._stat_recorders: set[int] = {
+            event.entity_id
+            for event in ctx.replay.events
+            if type(event).__name__ == "DamageReceivedStatEvent" and event.entity_id
+        }
 
         self._damage_events: list[tuple[float, int, float]] = []
         for event in ctx.replay.events:
-            if type(event).__name__ == "DamageEvent" and event.entity_id == event.target_id:
+            name = type(event).__name__
+            if name == "DamageEvent" and event.entity_id == event.target_id:
                 attacker_id = event.raw_data.get("vehicleID")
                 if attacker_id and attacker_id != event.entity_id and event.damage > 0:
-                    # Skip self-player damage from this source (replaced below)
-                    if attacker_id == self._self_vehicle_eid:
+                    # A recorder's own damage comes from its stat events below.
+                    if attacker_id in self._stat_recorders:
                         continue
                     self._damage_events.append((event.timestamp, attacker_id, event.damage))
-
-        # Self-player damage from receiveDamageStat (authoritative, includes fire/flood)
-        if self._self_vehicle_eid is not None:
-            for event in ctx.replay.events:
-                if (type(event).__name__ == "DamageReceivedStatEvent"
-                        and event.stat_type == "ENEMY"
-                        and event.delta_total > 0):
-                    self._damage_events.append(
-                        (event.timestamp, self._self_vehicle_eid, event.delta_total))
+            elif (name == "DamageReceivedStatEvent"
+                    and event.stat_type == "ENEMY"
+                    and event.delta_total > 0):
+                self._damage_events.append(
+                    (event.timestamp, event.entity_id, event.delta_total))
 
         self._damage_events.sort(key=lambda x: x[0])
         self._damage: dict[int, int] = {}

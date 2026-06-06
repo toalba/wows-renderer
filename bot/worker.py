@@ -254,7 +254,6 @@ def render_dual_replay(
     from renderer.layers.ships import ShipLayer
     from renderer.layers.smoke import SmokeLayer
     from renderer.layers.team_roster import TeamRosterLayer
-    from renderer.layers.trails import TrailLayer
     from renderer.layers.watermark import WatermarkLayer
     from renderer.layers.weather import WeatherLayer
 
@@ -299,12 +298,12 @@ def render_dual_replay(
 
     # Dual layer set — no self-centric layers (player_header, damage_stats,
     # ribbons, right_panel). Killfeed stays (server-authoritative). Trails
-    # are included because the neutral-observer view benefits from movement
-    # history of both teams.
+    # are omitted: the neutral-observer view is busy enough with both teams
+    # and the fading lines add clutter without referee value.
     for layer in [
         MapBackgroundLayer(), TeamRosterLayer(), CapturePointLayer(),
         WeatherLayer(), SmokeLayer(), ProjectileLayer(), AircraftLayer(),
-        TrailLayer(), ShipLayer(), HealthBarLayer(), ConsumableLayer(),
+        ShipLayer(), HealthBarLayer(), ConsumableLayer(),
         KillfeedLayer(), HudLayer(), WatermarkLayer(),
     ]:
         renderer.add_layer(layer)
