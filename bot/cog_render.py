@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import io
 import logging
 import queue
 import shutil
@@ -28,9 +29,181 @@ BATCH_MAX_REPLAYS = 10
 BATCH_COOLDOWN_SECONDS = 600
 DISCORD_ATTACHMENT_LIMIT_MB = 25
 DISCORD_EMBED_TOTAL_LIMIT = 5500  # conservative; discord's hard limit is 6000
+RESULT_VIEW_TIMEOUT_S = 600  # 10 min — covers slow clickers, bounds memory
+
+
+_FIELD_VALUE_LIMIT = 1024  # Discord hard limit
+_MD_ESCAPE_TABLE = str.maketrans({
+    # `_` inside `[link text]()` can't be backslash-escaped (Discord renders
+    # the literal `\`), but underscores there still leak into italic parsing
+    # for surrounding text. Swap for the visually-near-identical FULLWIDTH
+    # LOW LINE (U+FF3F), which doesn't participate in markdown at all.
+    "_": "＿",
+    "*": "\\*", "~": "\\~", "|": "\\|",
+    "`": "\\`", "[": "\\[", "]": "\\]",
+})
+
+
+def _md_escape(text: str) -> str:
+    """Defuse Discord markdown in user-provided text. Without this, an
+    underscore in one player name (`_c0ssack`) opens an italic span that
+    bleeds through every following player until the next `_` closes it."""
+    return text.translate(_MD_ESCAPE_TABLE)
+
+
+def _chunk_lines(lines: list[str], limit: int = _FIELD_VALUE_LIMIT) -> list[str]:
+    """Pack ``lines`` into ``limit``-char chunks joined by newlines.
+
+    Each chunk fits inside a single Discord embed field value. A line that
+    by itself exceeds ``limit`` is truncated so it still ships."""
+    chunks: list[str] = []
+    cur: list[str] = []
+    cur_len = 0
+    for line in lines:
+        if len(line) > limit:
+            line = line[: limit - 1] + "…"
+        add = len(line) + (1 if cur else 0)  # +1 for joining "\n"
+        if cur_len + add > limit:
+            chunks.append("\n".join(cur))
+            cur, cur_len = [line], len(line)
+        else:
+            cur.append(line)
+            cur_len += add
+    if cur:
+        chunks.append("\n".join(cur))
+    return chunks
+
+
+_EMBED_DESCRIPTION_LIMIT = 4096  # Discord hard limit
+
+
+def _make_team_embed(label: str, lines: list[str], color: int) -> discord.Embed | None:
+    """Build a single-team embed. Prefers the description (one contiguous
+    block, no inter-field padding) and falls back to chunked fields only
+    if joined lines exceed Discord's 4096-char description cap. Returns
+    None for empty input or when even the fallback overflows the per-embed
+    budget."""
+    if not lines:
+        return None
+    embed = discord.Embed(title=label, color=color)
+    embed.set_footer(text="Click a name to view their build on WoWs ShipBuilder")
+    joined = "\n".join(lines)
+    if len(joined) <= _EMBED_DESCRIPTION_LIMIT:
+        embed.description = joined
+    else:
+        # Title already names the team — fields don't need a label, so use a
+        # zero-width space to satisfy Discord's non-empty-name requirement.
+        for chunk in _chunk_lines(lines):
+            embed.add_field(name="​", value=chunk, inline=False)
+    if len(embed) > DISCORD_EMBED_TOTAL_LIMIT or len(embed.fields) > 25:
+        return None
+    return embed
+
+
+def _build_ship_builds_payload(
+    build_urls: list[tuple[str, str, int, str | None]],
+) -> tuple[list[discord.Embed], discord.File | None]:
+    """Render the Show Builds payload.
+
+    Returns ``(embeds, file)``. Normally produces one embed per team —
+    each ShipBuilder URL is ~250 chars so a 24-player match (~5800 chars)
+    doesn't fit in a single embed's 6000-char budget but splits cleanly
+    per side. If a single team's embed still overflows (extreme outlier),
+    falls back to a `.txt` file attachment and no embeds.
+    """
+    team0: list[str] = []
+    team1: list[str] = []
+    for name, ship, team, url in build_urls:
+        safe_name = _md_escape(name)
+        safe_ship = _md_escape(ship)
+        line = f"[{safe_name}]({url}) — {safe_ship}" if url else f"{safe_name} — {safe_ship}"
+        (team0 if team == 0 else team1).append(line)
+
+    allies = _make_team_embed("Allies", team0, color=0x2ECC71)
+    enemies = _make_team_embed("Enemies", team1, color=0xE74C3C)
+
+    embeds = [e for e in (allies, enemies) if e is not None]
+    # If both teams produced embeds OR neither team had data, no fallback needed.
+    # Fallback fires only when a team had data but couldn't fit in one embed.
+    overflowed = (team0 and allies is None) or (team1 and enemies is None)
+    if overflowed:
+        plain_lines = ["Allies:", *[f"  {ln}" for ln in team0], "", "Enemies:",
+                       *[f"  {ln}" for ln in team1]]
+        buf = io.BytesIO("\n".join(plain_lines).encode("utf-8"))
+        return [], discord.File(buf, filename="ship_builds.txt")
+    return embeds, None
+
+
+class _RenderResultView(discord.ui.View):
+    """Buttons attached to a render reply. Anyone in the channel can click;
+    button state is held in process memory and dies on bot restart."""
+
+    def __init__(
+        self,
+        *,
+        build_urls: list[tuple[str, str, int, str | None]],
+        chat_text: str,
+        chat_filename: str,
+    ) -> None:
+        super().__init__(timeout=RESULT_VIEW_TIMEOUT_S)
+        self._build_urls = build_urls
+        self._chat_text = chat_text
+        self._chat_filename = chat_filename
+        # Set by the cog after the render message lands so on_timeout can
+        # grey out the buttons. Without this Discord still shows them as
+        # clickable but every click returns "interaction failed".
+        self.message: discord.Message | None = None
+        if not build_urls:
+            self.remove_item(self.show_builds)
+        if not chat_text:
+            self.remove_item(self.download_chat)
+
+    async def on_timeout(self) -> None:
+        if self.message is None:
+            return
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
+        try:
+            await self.message.edit(view=self)
+        except discord.HTTPException:
+            pass
+
+    @discord.ui.button(label="Show Builds", style=discord.ButtonStyle.secondary)
+    async def show_builds(
+        self, interaction: discord.Interaction, button: discord.ui.Button,
+    ) -> None:
+        button.disabled = True
+        embeds, file = _build_ship_builds_payload(self._build_urls)
+        if embeds:
+            # First embed answers the click via the interaction; any extras
+            # go via channel.send so Discord doesn't tether them to the
+            # original render message with a "replying to" indicator.
+            await interaction.response.send_message(embed=embeds[0])
+            for extra in embeds[1:]:
+                await interaction.channel.send(embed=extra)
+        else:
+            assert file is not None
+            await interaction.response.send_message(file=file)
+        await interaction.message.edit(view=self)
+
+    @discord.ui.button(label="Download Chat", style=discord.ButtonStyle.secondary)
+    async def download_chat(
+        self, interaction: discord.Interaction, button: discord.ui.Button,
+    ) -> None:
+        button.disabled = True
+        buf = io.BytesIO(self._chat_text.encode("utf-8"))
+        file = discord.File(buf, filename=self._chat_filename)
+        await interaction.response.send_message(file=file)
+        await interaction.message.edit(view=self)
 
 # Render behavior flags exposed via the slash commands' `flags` param.
 KNOWN_FLAGS = frozenset({"anonymize"})
+
+THEME_CHOICES = [
+    app_commands.Choice(name="Default — green/red", value="default"),
+    app_commands.Choice(name="Brandon — cyan/magenta", value="brandon"),
+]
 
 
 def _parse_flags(raw: str | None) -> frozenset[str]:
@@ -51,6 +224,13 @@ def _batch_cooldown(interaction: discord.Interaction) -> app_commands.Cooldown |
     if interaction.guild_id in cog.config.authorized_guild_ids:  # type: ignore[attr-defined]
         return app_commands.Cooldown(1, BATCH_COOLDOWN_SECONDS)
     return None
+
+
+def _dual_cooldown(interaction: discord.Interaction) -> app_commands.Cooldown | None:
+    """10-min cooldown for /render_dual, applied on every guild. Unlike
+    /render_batch, /render_dual is no longer gated to authorized guilds, so the
+    cooldown must always apply to bound the cost of this heavy operation."""
+    return app_commands.Cooldown(1, BATCH_COOLDOWN_SECONDS)
 
 
 def _extract_replays_from_zip(
@@ -160,22 +340,28 @@ class RenderCog(commands.Cog):
     @app_commands.describe(
         replay="Upload a .wowsreplay file",
         preset="Render preset (default: full)",
+        theme="Color theme (default: Default)",
         flags="Comma-separated flags. Available: anonymize",
     )
-    @app_commands.choices(preset=[
-        app_commands.Choice(name="Full — all layers + both panels", value="full"),
-        app_commands.Choice(name="Map — minimap only, no panels", value="map"),
-        app_commands.Choice(name="Player data — minimap + killfeed/ribbons", value="playerdata"),
-    ])
+    @app_commands.choices(
+        preset=[
+            app_commands.Choice(name="Full — all layers + both panels", value="full"),
+            app_commands.Choice(name="Map — minimap only, no panels", value="map"),
+            app_commands.Choice(name="Player data — minimap + killfeed/ribbons", value="playerdata"),
+        ],
+        theme=THEME_CHOICES,
+    )
     @app_commands.checks.cooldown(1, 60)
     async def render(
         self,
         interaction: discord.Interaction,
         replay: discord.Attachment,
         preset: app_commands.Choice[str] | None = None,
+        theme: app_commands.Choice[str] | None = None,
         flags: str | None = None,
     ) -> None:
         preset_value = preset.value if preset else "full"
+        theme_value = theme.value if theme else "default"
         flag_set = _parse_flags(flags)
 
         # Validate
@@ -193,9 +379,9 @@ class RenderCog(commands.Cog):
             return
 
         log.info(
-            "/render start: user=%s guild=%s replay=%s size=%.1fMB preset=%s flags=%s",
+            "/render start: user=%s guild=%s replay=%s size=%.1fMB preset=%s theme=%s flags=%s",
             interaction.user.id, interaction.guild_id,
-            replay.filename, replay.size / 1024 / 1024, preset_value,
+            replay.filename, replay.size / 1024 / 1024, preset_value, theme_value,
             sorted(flag_set) or "—",
         )
         await interaction.response.defer()
@@ -228,6 +414,7 @@ class RenderCog(commands.Cog):
                 minimap_size=cfg.minimap_size,
                 panel_width=cfg.panel_width,
                 flags=flag_set,
+                theme=theme_value,
             )
             pool, future = await self._submit_render(render_call)
 
@@ -260,7 +447,10 @@ class RenderCog(commands.Cog):
                     await interaction.edit_original_response(content=new_msg)
 
             # Collect result (raises if worker crashed)
-            _, replay_duration, timings, game_version, num_players, game_type, build_urls = await future
+            (
+                _, replay_duration, timings, game_version, num_players,
+                game_type, build_urls, chat_text,
+            ) = await future
             elapsed = time.monotonic() - t_start
 
             # Format durations
@@ -287,40 +477,30 @@ class RenderCog(commands.Cog):
                     timeout=30,
                 )
             else:
-                await asyncio.wait_for(
-                    interaction.edit_original_response(
-                        content=(
-                            f"Here's your minimap replay!\n"
-                            f"{game_type} · {replay_mins}:{replay_secs:02d} · "
-                            f"v{game_version} · "
-                            f"Rendered in {elapsed:.1f}s · "
-                            f"{file_size / 1024 / 1024:.1f} MB"
-                        ),
-                        attachments=[discord.File(str(output_path), filename="minimap.mp4")],
+                chat_filename = f"{Path(replay.filename).stem}_chat.txt"
+                result_view = _RenderResultView(
+                    build_urls=build_urls, chat_text=chat_text, chat_filename=chat_filename,
+                )
+                edit_kwargs: dict = {
+                    "content": (
+                        f"Here's your minimap replay!\n"
+                        f"{game_type} · {replay_mins}:{replay_secs:02d} · "
+                        f"v{game_version} · "
+                        f"Rendered in {elapsed:.1f}s · "
+                        f"{file_size / 1024 / 1024:.1f} MB"
                     ),
+                    "attachments": [discord.File(str(output_path), filename="minimap.mp4")],
+                }
+                if result_view.children:
+                    edit_kwargs["view"] = result_view
+                msg = await asyncio.wait_for(
+                    interaction.edit_original_response(**edit_kwargs),
                     timeout=120,
                 )
+                if result_view.children:
+                    result_view.message = msg
             upload_time = time.perf_counter() - t_upload_start
             log.info("Upload complete in %.1fs for %s", upload_time, replay.filename)
-
-            # Send build links as follow-up embed
-            if build_urls:
-                try:
-                    team0: list[str] = []
-                    team1: list[str] = []
-                    for name, ship, team, url in build_urls:
-                        line = f"[{name}]({url}) — {ship}" if url else f"{name} — {ship}"
-                        (team0 if team == 0 else team1).append(line)
-
-                    embed = discord.Embed(title="Ship Builds", color=0x3498db)
-                    if team0:
-                        embed.add_field(name="Allies", value="\n".join(team0), inline=True)
-                    if team1:
-                        embed.add_field(name="Enemies", value="\n".join(team1), inline=True)
-                    embed.set_footer(text="Click a name to view their build on WoWs ShipBuilder")
-                    await interaction.followup.send(embed=embed)
-                except Exception as e:
-                    log.warning("Failed to send build embed: %s", e)
 
             # Log timing breakdown
             resolve_time = timings.get("resolve", 0)
@@ -401,6 +581,7 @@ class RenderCog(commands.Cog):
         timeout: float,
         semaphore: asyncio.Semaphore,
         flag_set: frozenset[str] = frozenset(),
+        theme_value: str = "default",
     ) -> _BatchResult:
         """Submit + await a single batch item, bounded by the semaphore so that
         at most ``max_workers`` submissions are in flight at once. This prevents
@@ -421,6 +602,7 @@ class RenderCog(commands.Cog):
                 minimap_size=cfg.minimap_size,
                 panel_width=cfg.panel_width,
                 flags=flag_set,
+                theme=theme_value,
             )
             try:
                 _, future = await self._submit_render(render_call)
@@ -434,9 +616,10 @@ class RenderCog(commands.Cog):
                 )
 
             try:
-                _, replay_duration, timings, game_version, _num_players, game_type, _build_urls = (
-                    await asyncio.wait_for(future, timeout=timeout)
-                )
+                (
+                    _, replay_duration, timings, game_version, _num_players,
+                    game_type, _build_urls, _chat_text,
+                ) = await asyncio.wait_for(future, timeout=timeout)
             except TimeoutError:
                 future.cancel()
                 return _BatchResult(item=item, ok=False, error=f"timed out after {int(timeout)}s")
@@ -481,13 +664,17 @@ class RenderCog(commands.Cog):
         replay9="Replay or .zip",
         replay10="Replay or .zip",
         preset="Render preset (default: full)",
+        theme="Color theme (default: Default)",
         flags="Comma-separated flags. Available: anonymize",
     )
-    @app_commands.choices(preset=[
-        app_commands.Choice(name="Full — all layers + both panels", value="full"),
-        app_commands.Choice(name="Map — minimap only, no panels", value="map"),
-        app_commands.Choice(name="Player data — minimap + killfeed/ribbons", value="playerdata"),
-    ])
+    @app_commands.choices(
+        preset=[
+            app_commands.Choice(name="Full — all layers + both panels", value="full"),
+            app_commands.Choice(name="Map — minimap only, no panels", value="map"),
+            app_commands.Choice(name="Player data — minimap + killfeed/ribbons", value="playerdata"),
+        ],
+        theme=THEME_CHOICES,
+    )
     @app_commands.checks.dynamic_cooldown(_batch_cooldown)
     async def render_batch(
         self,
@@ -503,6 +690,7 @@ class RenderCog(commands.Cog):
         replay9: discord.Attachment | None = None,
         replay10: discord.Attachment | None = None,
         preset: app_commands.Choice[str] | None = None,
+        theme: app_commands.Choice[str] | None = None,
         flags: str | None = None,
     ) -> None:
         # Guild authorization gate (cooldown factory already skipped tracking for unauthorized)
@@ -513,6 +701,7 @@ class RenderCog(commands.Cog):
             return
 
         preset_value = preset.value if preset else "full"
+        theme_value = theme.value if theme else "default"
         flag_set = _parse_flags(flags)
         raw = [replay1, replay2, replay3, replay4, replay5,
                replay6, replay7, replay8, replay9, replay10]
@@ -540,9 +729,9 @@ class RenderCog(commands.Cog):
             return
 
         log.info(
-            "/render_batch start: user=%s guild=%s attachments=%d rejected=%d preset=%s flags=%s",
+            "/render_batch start: user=%s guild=%s attachments=%d rejected=%d preset=%s theme=%s flags=%s",
             interaction.user.id, interaction.guild_id,
-            len(valid), len(rejected), preset_value,
+            len(valid), len(rejected), preset_value, theme_value,
             sorted(flag_set) or "—",
         )
         await interaction.response.defer()
@@ -613,7 +802,9 @@ class RenderCog(commands.Cog):
             semaphore = asyncio.Semaphore(max(1, cfg.max_workers))
             tasks = [
                 asyncio.create_task(
-                    self._render_one_for_batch(item, preset_value, per_replay_timeout, semaphore, flag_set),
+                    self._render_one_for_batch(
+                        item, preset_value, per_replay_timeout, semaphore, flag_set, theme_value,
+                    ),
                 )
                 for item in items
             ]
@@ -677,9 +868,9 @@ class RenderCog(commands.Cog):
             await interaction.edit_original_response(content=None, embed=embed)
 
             log.info(
-                "[BATCH] user=%s guild=%s total=%d ok=%d skipped=%d time=%.1fs preset=%s",
+                "[BATCH] user=%s guild=%s total=%d ok=%d skipped=%d time=%.1fs preset=%s theme=%s",
                 interaction.user.id, interaction.guild_id,
-                len(items), ok_count, len(rejected), batch_elapsed, preset_value,
+                len(items), ok_count, len(rejected), batch_elapsed, preset_value, theme_value,
             )
         except Exception:  # noqa: BLE001
             log.exception("Batch render failed (user=%s guild=%s)", interaction.user.id, interaction.guild_id)
@@ -757,23 +948,21 @@ class RenderCog(commands.Cog):
     @app_commands.describe(
         replay1="First replay (.wowsreplay)",
         replay2="Second replay (.wowsreplay, must be from the same match)",
+        theme="Color theme (default: Default)",
         flags="Comma-separated flags. Available: anonymize",
     )
-    @app_commands.checks.dynamic_cooldown(_batch_cooldown)
+    @app_commands.choices(theme=THEME_CHOICES)
+    @app_commands.checks.dynamic_cooldown(_dual_cooldown)
     async def render_dual(
         self,
         interaction: discord.Interaction,
         replay1: discord.Attachment,
         replay2: discord.Attachment,
+        theme: app_commands.Choice[str] | None = None,
         flags: str | None = None,
     ) -> None:
         flag_set = _parse_flags(flags)
-        # Guild authorization gate (same allowlist as /render_batch).
-        if interaction.guild_id is None or interaction.guild_id not in self.config.authorized_guild_ids:
-            await interaction.response.send_message(
-                "This command isn't available in this server.", ephemeral=True,
-            )
-            return
+        theme_value = theme.value if theme else "default"
 
         # Validate both attachments
         max_bytes = self.config.max_upload_mb * 1024 * 1024
@@ -791,9 +980,9 @@ class RenderCog(commands.Cog):
                 return
 
         log.info(
-            "/render_dual start: user=%s guild=%s replay_a=%s replay_b=%s flags=%s",
+            "/render_dual start: user=%s guild=%s replay_a=%s replay_b=%s theme=%s flags=%s",
             interaction.user.id, interaction.guild_id,
-            replay1.filename, replay2.filename,
+            replay1.filename, replay2.filename, theme_value,
             sorted(flag_set) or "—",
         )
         await interaction.response.defer()
@@ -826,6 +1015,7 @@ class RenderCog(commands.Cog):
                 minimap_size=cfg.minimap_size,
                 panel_width=cfg.panel_width,
                 flags=flag_set,
+                theme=theme_value,
             )
             pool, future = await self._submit_render(render_call)
 
@@ -854,7 +1044,10 @@ class RenderCog(commands.Cog):
                     last_msg = new_msg
                     await interaction.edit_original_response(content=new_msg)
 
-            _, replay_duration, timings, game_version, num_players, game_type, _ = await future
+            (
+                _, replay_duration, timings, game_version, num_players,
+                game_type, _build_urls, chat_text,
+            ) = await future
             elapsed = time.monotonic() - t_start
 
             file_size = output_path.stat().st_size
@@ -874,18 +1067,27 @@ class RenderCog(commands.Cog):
                     timeout=30,
                 )
             else:
-                await asyncio.wait_for(
-                    interaction.edit_original_response(
-                        content=(
-                            f"Dual-perspective render — both teams visible.\n"
-                            f"{game_type} · {mins}:{secs:02d} · {num_players} players · "
-                            f"v{game_version} · Rendered in {elapsed:.1f}s · "
-                            f"{file_size / 1024 / 1024:.1f} MB"
-                        ),
-                        attachments=[discord.File(str(output_path), filename="dual_render.mp4")],
+                chat_filename = f"{Path(replay1.filename).stem}__{Path(replay2.filename).stem}_chat.txt"
+                result_view = _RenderResultView(
+                    build_urls=[], chat_text=chat_text, chat_filename=chat_filename,
+                )
+                edit_kwargs: dict = {
+                    "content": (
+                        f"Dual-perspective render — both teams visible.\n"
+                        f"{game_type} · {mins}:{secs:02d} · {num_players} players · "
+                        f"v{game_version} · Rendered in {elapsed:.1f}s · "
+                        f"{file_size / 1024 / 1024:.1f} MB"
                     ),
+                    "attachments": [discord.File(str(output_path), filename="dual_render.mp4")],
+                }
+                if result_view.children:
+                    edit_kwargs["view"] = result_view
+                msg = await asyncio.wait_for(
+                    interaction.edit_original_response(**edit_kwargs),
                     timeout=120,
                 )
+                if result_view.children:
+                    result_view.message = msg
             log.info(
                 "[TIMING-DUAL] resolve=%.2fs parse=%.2fs render=%.2fs encode=%.2fs total=%.1fs frames=%d",
                 timings.get("resolve", 0), timings.get("parse", 0),

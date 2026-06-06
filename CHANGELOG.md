@@ -4,6 +4,9 @@ All notable changes to `wows-minimap-renderer` are documented here.
 
 ## [Unreleased]
 
+### Changed
+- **`/render_dual` is now available on every server** — removed the `AUTHORIZED_GUILD_IDS` gate. A dedicated 10-min per-user cooldown now applies on all guilds (the previously shared `_batch_cooldown` only rate-limited authorized guilds, which would have left dual renders uncapped everywhere else). `/render_batch` remains gated.
+
 ## [0.3.0] — 2026-05-21
 
 ### Added

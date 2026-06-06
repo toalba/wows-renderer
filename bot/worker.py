@@ -14,6 +14,32 @@ log = logging.getLogger(__name__)
 PRESETS = ["full", "map", "playerdata"]
 
 
+def _format_chat_log(replay) -> str:
+    """Format ChatEvents as a plain-text transcript.
+
+    Each line: `[mm:ss] [T|P|C] PlayerName: message` (T=team, P=prebattle,
+    C=common). Unknown senders fall back to `Player#<id>`. Returns "" if
+    the replay carried no chat (which is common in solo-queue replays).
+    """
+    from wows_replay_parser.events.models import ChatEvent
+
+    name_by_account = {p.account_id: p.name for p in replay.players}
+    lines: list[str] = []
+    for event in replay.events:
+        if not isinstance(event, ChatEvent) or not event.message:
+            continue
+        mins, secs = divmod(int(event.timestamp), 60)
+        if event.channel == "battle_team":
+            ch = "T"
+        elif event.channel == "battle_prebattle":
+            ch = "P"
+        else:
+            ch = "C"
+        name = name_by_account.get(event.sender_id) or f"Player#{event.sender_id}"
+        lines.append(f"[{mins:02d}:{secs:02d}] [{ch}] {name}: {event.message}")
+    return "\n".join(lines)
+
+
 def render_replay(
     replay_path: str,
     output_path: str,
@@ -26,7 +52,8 @@ def render_replay(
     minimap_size: int = 1080,
     panel_width: int = 420,
     flags: frozenset[str] = frozenset(),
-) -> tuple[str, float, dict[str, float], str, int]:
+    theme: str = "default",
+) -> tuple[str, float, dict[str, float], str, int, str, list, str]:
     """Parse and render a replay to mp4. Runs in a worker process.
 
     Presets:
@@ -38,7 +65,8 @@ def render_replay(
     every 50 frames (and on the last frame).
 
     Returns:
-        (output_path, replay_duration, timings_dict, game_version, num_players)
+        (output_path, replay_duration, timings, game_version, num_players,
+         game_type, build_urls, chat_text)
     """
     from pathlib import Path
     from time import perf_counter
@@ -107,6 +135,7 @@ def render_replay(
         left_panel_width=left_pw,
         right_panel_width=right_pw,
         flags=flags,
+        theme=theme,
     )
     renderer = MinimapRenderer(config)
 
@@ -176,8 +205,12 @@ def render_replay(
         timings["build_urls"], len(build_urls),
     )
 
+    chat_text = _format_chat_log(replay)
     game_type = replay.meta.get("gameType", "Unknown")
-    return output_path, replay.duration, timings, replay.game_version, len(replay.players), game_type, build_urls
+    return (
+        output_path, replay.duration, timings, replay.game_version,
+        len(replay.players), game_type, build_urls, chat_text,
+    )
 
 
 def render_dual_replay(
@@ -192,12 +225,14 @@ def render_dual_replay(
     minimap_size: int = 1080,
     panel_width: int = 420,
     flags: frozenset[str] = frozenset(),
-) -> tuple[str, float, dict[str, float], str, int, str, list]:
+    theme: str = "default",
+) -> tuple[str, float, dict[str, float], str, int, str, list, str]:
     """Dual-perspective merged render of two replays from the same match.
 
     Returns the same tuple shape as render_replay so the cog handler can
     unpack uniformly. build_urls is always empty (no self-player in the
-    merged/neutral-observer view).
+    merged/neutral-observer view); chat_text aggregates ChatEvents from
+    the merged stream so dedup matches what the killfeed layer shows.
     """
     from pathlib import Path
     from time import perf_counter
@@ -258,6 +293,7 @@ def render_dual_replay(
         minimap_size=minimap_size,
         panel_width=panel_width,
         flags=flags,
+        theme=theme,
     )
     renderer = DualMinimapRenderer(config, replay=merged)
 
@@ -295,5 +331,9 @@ def render_dual_replay(
     # Dual mode: no self-player → no build URLs.
     timings["build_urls"] = 0.0
 
+    chat_text = _format_chat_log(merged)
     game_type = merged.meta.get("gameType", "Unknown") if hasattr(merged, "meta") else "Unknown"
-    return output_path, merged.duration, timings, merged.game_version, len(merged.players), game_type, []
+    return (
+        output_path, merged.duration, timings, merged.game_version,
+        len(merged.players), game_type, [], chat_text,
+    )
