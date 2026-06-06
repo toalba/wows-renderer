@@ -226,6 +226,13 @@ def _batch_cooldown(interaction: discord.Interaction) -> app_commands.Cooldown |
     return None
 
 
+def _dual_cooldown(interaction: discord.Interaction) -> app_commands.Cooldown | None:
+    """10-min cooldown for /render_dual, applied on every guild. Unlike
+    /render_batch, /render_dual is no longer gated to authorized guilds, so the
+    cooldown must always apply to bound the cost of this heavy operation."""
+    return app_commands.Cooldown(1, BATCH_COOLDOWN_SECONDS)
+
+
 def _extract_replays_from_zip(
     zip_path: Path,
     dst_dir: Path,
@@ -945,7 +952,7 @@ class RenderCog(commands.Cog):
         flags="Comma-separated flags. Available: anonymize",
     )
     @app_commands.choices(theme=THEME_CHOICES)
-    @app_commands.checks.dynamic_cooldown(_batch_cooldown)
+    @app_commands.checks.dynamic_cooldown(_dual_cooldown)
     async def render_dual(
         self,
         interaction: discord.Interaction,
@@ -956,12 +963,6 @@ class RenderCog(commands.Cog):
     ) -> None:
         flag_set = _parse_flags(flags)
         theme_value = theme.value if theme else "default"
-        # Guild authorization gate (same allowlist as /render_batch).
-        if interaction.guild_id is None or interaction.guild_id not in self.config.authorized_guild_ids:
-            await interaction.response.send_message(
-                "This command isn't available in this server.", ephemeral=True,
-            )
-            return
 
         # Validate both attachments
         max_bytes = self.config.max_upload_mb * 1024 * 1024
