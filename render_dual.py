@@ -20,7 +20,6 @@ from renderer.layers.projectiles import ProjectileLayer
 from renderer.layers.ships import ShipLayer
 from renderer.layers.smoke import SmokeLayer
 from renderer.layers.team_roster import TeamRosterLayer
-from renderer.layers.trails import TrailLayer
 from renderer.layers.watermark import WatermarkLayer
 from renderer.layers.weather import WeatherLayer
 
@@ -52,8 +51,8 @@ renderer = DualMinimapRenderer(config, replay=merged)
 
 # Dual layer set — no player_header, damage_stats, ribbons, right_panel.
 # Killfeed is kept (server-authoritative, works in neutral observer mode).
-# Trails is added here (absent from render_quick.py) because dual mode is a neutral
-# observer view where movement history helps track both teams.
+# Trails are omitted: the neutral-observer view already shows both teams and
+# the fading lines add clutter without referee value.
 for L in [
     MapBackgroundLayer(),
     TeamRosterLayer(),
@@ -62,7 +61,6 @@ for L in [
     SmokeLayer(),
     ProjectileLayer(),
     AircraftLayer(),
-    TrailLayer(),
     ShipLayer(),
     HealthBarLayer(),
     ConsumableLayer(),
