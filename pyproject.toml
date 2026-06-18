@@ -36,9 +36,10 @@ build-backend = "hatchling.build"
 
 [tool.uv.sources]
 # Temporary git pin for the dual-merge dedup fix (clock alignment +
-# server-broadcast event dedup) until it's published to PyPI. Public repo,
-# so the Docker build fetches it over https with no extra auth.
-wows-replay-parser = { git = "https://github.com/toalba/wows-replay-parser.git", rev = "ddb22241f0e410c2ddda020e45a245971a7134d2" }
+# server-broadcast event dedup) plus the patch-15.5 arena_key_maps.json
+# group-schema roster fix (build 12668706), until published to PyPI. Public
+# repo, so the Docker build fetches it over https with no extra auth.
+wows-replay-parser = { git = "https://github.com/toalba/wows-replay-parser.git", rev = "4d0b23d84e5dd971f7f139103a505e20d7a23c1d" }
 
 [tool.ruff]
 target-version = "py312"
