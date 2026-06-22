@@ -76,14 +76,42 @@ Drops the team rosters; keeps the recording-player narrative.
 |---|---|---|
 | Python | >= 3.12 | Runtime |
 | FFmpeg | any recent | Video encoding (must be on PATH) |
-| Cairo | system lib | 2D vector graphics (pycairo needs it) |
+| Cairo | system lib | 2D vector graphics. pycairo bundles it in its wheel, but **cairosvg needs a separate `libcairo-2.dll`/`libcairo.so` for SVG ship icons** — see [Installing Cairo](#installing-cairo) (matters on Windows) |
 | Git | any | Gamedata version cache (git archive extraction) |
 
 ### Installing Cairo
 
-**Windows (easiest):** pycairo ships prebuilt wheels — `pip install pycairo` just works.
+**Windows:** `pip install pycairo` ships a prebuilt wheel with Cairo statically
+bundled, so pycairo itself works out of the box. **This is not enough on its
+own** — the renderer also uses **cairosvg** (via `cairocffi`) to rasterize the
+ship-class SVG icons, and `cairocffi` loads a *separate* `libcairo-2.dll` at
+runtime through `ctypes`. pycairo's statically-linked copy does **not** expose
+that DLL. If it's missing, every SVG icon load fails silently, the renderer
+falls back to the PNG marker icons in `gui/battle_hud/markers/ship/`, and
+**ships render rotated 90°** (the PNG markers point east; the SVGs point north,
+which is what the `cr.rotate(yaw)` math assumes).
 
-**Ubuntu/Debian:**
+Install the Cairo DLL stack (plus its dependency chain — pixman, freetype,
+fontconfig, libpng, glib…) with MSYS2 and put it on PATH:
+
+```powershell
+winget install MSYS2.MSYS2
+& C:\msys64\usr\bin\pacman -Sy --noconfirm --needed mingw-w64-x86_64-cairo
+# Persist the DLL directory to your user PATH (takes effect in new shells):
+[Environment]::SetEnvironmentVariable('Path',
+    [Environment]::GetEnvironmentVariable('Path','User') + ';C:\msys64\mingw64\bin', 'User')
+```
+
+> **Append** `C:\msys64\mingw64\bin` to PATH — do not prepend it. MSYS2 ships its
+> own `python.exe` in that directory, and putting it first would shadow your
+> project interpreter (breaking `av`, the parser, etc.). Appended, your normal
+> `python3` still wins while the Cairo DLLs remain discoverable.
+
+Verify with `python -c "import cairosvg; cairosvg.svg2png(bytestring=b'<svg/>')"` —
+it should run without an `OSError: no library called "cairo-2" was found`.
+
+**Ubuntu/Debian:** the system `libcairo2` package provides the shared library
+that `cairocffi` needs, so SVG icons work without extra steps:
 ```bash
 sudo apt-get install libcairo2-dev pkg-config python3-dev
 ```
