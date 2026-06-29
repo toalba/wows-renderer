@@ -390,7 +390,8 @@ class RenderCog(commands.Cog):
         tmp_dir = tempfile.mkdtemp(prefix="wows_render_")
         safe_name = Path(replay.filename).name  # strip directory traversal
         replay_path = Path(tmp_dir) / safe_name
-        output_path = Path(tmp_dir) / "minimap.mp4"
+        output_name = Path(replay.filename).stem + ".mp4"
+        output_path = Path(tmp_dir) / output_name
 
         pool = self._pool  # hoisted so the outer BrokenProcessPool handler can always rebuild
         try:
@@ -489,7 +490,7 @@ class RenderCog(commands.Cog):
                         f"Rendered in {elapsed:.1f}s · "
                         f"{file_size / 1024 / 1024:.1f} MB"
                     ),
-                    "attachments": [discord.File(str(output_path), filename="minimap.mp4")],
+                    "attachments": [discord.File(str(output_path), filename=output_name)],
                 }
                 if result_view.children:
                     edit_kwargs["view"] = result_view
