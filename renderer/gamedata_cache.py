@@ -575,6 +575,116 @@ def _find_closest_tag(
     return best[1]
 
 
+def _tag_commit(gamedata_repo: Path, tag: str) -> str | None:
+    """Resolve *tag* to its commit hash, or None if unavailable.
+
+    Returns None when the tag doesn't exist, the repo isn't a git repo,
+    or git isn't on PATH — callers treat None as "cannot validate".
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(gamedata_repo), "rev-parse", f"{tag}^{{commit}}"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+    if result.returncode != 0:
+        return None
+    commit = result.stdout.strip()
+    return commit or None
+
+
+def _read_sentinel(version_dir: Path) -> dict[str, str] | None:
+    """Parse the ``.ready`` sentinel into a dict, or None if absent.
+
+    Format (line 1 is the legacy version marker, kept for back-compat):
+
+        v{build_id}
+        tag=v{build_id}
+        commit={hash}
+
+    Legacy sentinels (pre tag-drift detection) only have line 1; the
+    returned dict then has no ``tag``/``commit`` keys.
+    """
+    sentinel = version_dir / ".ready"
+    try:
+        text = sentinel.read_text()
+    except OSError:
+        return None
+    info: dict[str, str] = {}
+    for line in text.splitlines():
+        if "=" in line:
+            key, _, value = line.partition("=")
+            info[key.strip()] = value.strip()
+    return info
+
+
+def _cache_is_current(
+    version_dir: Path,
+    gamedata_repo: Path,
+    build_id: str,
+) -> bool:
+    """Whether the cache dir matches the current state of its source tag.
+
+    The gamedata pipeline occasionally re-creates a version tag with fixed
+    data (seen with v12830008: entity_defs changed after the first sync).
+    A cache built from the earlier tag state then silently misparses
+    replays, so ``.ready`` records the tag commit and we compare it here.
+
+    Returns True (trust the cache) when validation is impossible: git or
+    the tag is gone — old versions whose tags were pruned must keep
+    working from cache alone.
+    """
+    info = _read_sentinel(version_dir)
+    if info is None:
+        return False
+
+    cached_commit = info.get("commit")
+    tag = info.get("tag", f"v{build_id}")
+
+    current_commit = _tag_commit(gamedata_repo, tag)
+    if current_commit is None:
+        # Tag pruned or git unavailable — nothing to compare against.
+        return True
+
+    if cached_commit is None:
+        # Legacy sentinel: the tag exists but we don't know which commit
+        # the cache came from. Rebuild once to pick up possible re-tags;
+        # the new sentinel then records the commit.
+        log.info(
+            "Cache for v%s predates tag-drift detection — rebuilding once "
+            "from tag %s", build_id, tag,
+        )
+        return False
+
+    if cached_commit != current_commit:
+        log.warning(
+            "Cache for v%s is stale: tag %s moved from %s to %s "
+            "(gamedata re-tagged) — rebuilding",
+            build_id, tag, cached_commit[:12], current_commit[:12],
+        )
+        return False
+
+    return True
+
+
+def _discard_version_dir(version_dir: Path, build_id: str) -> None:
+    """Remove a stale cache dir without disturbing concurrent readers.
+
+    Rename-then-delete: readers holding open file handles keep working
+    (POSIX), and a concurrent worker that already moved the dir simply
+    causes the rename to fail — then there is nothing left to discard.
+    """
+    stale_dir = version_dir.parent / f"_stale_{build_id}_{os.getpid()}"
+    try:
+        version_dir.rename(stale_dir)
+    except OSError:
+        return
+    shutil.rmtree(stale_dir, ignore_errors=True)
+
+
 def _list_all_tags(gamedata_repo: Path) -> list[str]:
     """List all version tags (build IDs) in the gamedata repo."""
     try:
@@ -667,11 +777,15 @@ def ensure_version_cache(
 
     # ── Fast path ──────────────────────────────────────────────
     if (version_dir / ".ready").exists():
-        log.debug("Cache hit for v%s", build_id)
-        return VersionedGamedata(
-            version_dir=version_dir,
-            build_id=build_id,
-        )
+        if _cache_is_current(version_dir, gamedata_repo, build_id):
+            log.debug("Cache hit for v%s", build_id)
+            return VersionedGamedata(
+                version_dir=version_dir,
+                build_id=build_id,
+            )
+        # Stale (source tag was re-created with different content):
+        # discard and fall through to repopulation.
+        _discard_version_dir(version_dir, build_id)
 
     # ── Slow path: populate cache ──────────────────────────────
     log.info("Populating cache for v%s...", build_id)
@@ -740,8 +854,13 @@ def ensure_version_cache(
         if content_dir.exists():
             shutil.rmtree(content_dir)
 
-        # Write sentinel
-        (tmp_dir / ".ready").write_text(f"v{build_id}\n")
+        # Write sentinel. tag= and commit= let the fast path detect when
+        # the pipeline re-creates the tag with different content.
+        sentinel_lines = [f"v{build_id}", f"tag={tag}"]
+        tag_commit = _tag_commit(gamedata_repo, tag)
+        if tag_commit is not None:
+            sentinel_lines.append(f"commit={tag_commit}")
+        (tmp_dir / ".ready").write_text("\n".join(sentinel_lines) + "\n")
 
         # Atomic rename
         try:
@@ -842,7 +961,9 @@ def populate_all_caches(
 
     for build_id in all_builds:
         version_dir = cache_root / f"v{build_id}"
-        if (version_dir / ".ready").exists():
+        if (version_dir / ".ready").exists() and _cache_is_current(
+            version_dir, gamedata_repo, build_id,
+        ):
             log.debug("Cache already exists for v%s", build_id)
             continue
 
