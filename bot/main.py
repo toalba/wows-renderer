@@ -38,7 +38,10 @@ def main() -> None:
             try:
                 await bot.tree.sync(guild=guild)
             except discord.Forbidden:
-                log.warning("Sync für Guild %s fehlgeschlagen – Bot nicht eingeladen oder applications.commands-Scope fehlt", gid)
+                log.warning(
+                    "Sync für Guild %s fehlgeschlagen – Bot nicht eingeladen oder "
+                    "applications.commands-Scope fehlt", gid,
+                )
         await bot.tree.sync()
 
         # Populate gamedata caches in the background so the bot starts immediately
