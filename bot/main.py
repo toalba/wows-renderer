@@ -28,7 +28,10 @@ def main() -> None:
         for gid in config.authorized_guild_ids:
             guild = discord.Object(id=gid)
             bot.tree.copy_global_to(guild=guild)
-            await bot.tree.sync(guild=guild)
+            try:
+                await bot.tree.sync(guild=guild)
+            except discord.Forbidden:
+                log.warning("Sync für Guild %s fehlgeschlagen – Bot nicht eingeladen oder applications.commands-Scope fehlt", gid)
         await bot.tree.sync()
 
         # Populate gamedata caches in the background so the bot starts immediately
