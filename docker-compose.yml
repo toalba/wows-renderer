@@ -14,6 +14,13 @@ services:
       - ./.git/modules/wows-gamedata:/app/.git/modules/wows-gamedata:ro
       - gamedata-cache:/root/.cache/wows-gamedata
 
+    # Prometheus /metrics. `expose`, not `ports` — reachable from the
+    # prometheus container on the compose network, never from the host or the
+    # internet. Override the port with METRICS_PORT in .env (and in
+    # monitoring/prometheus.yml) if 9108 collides.
+    expose:
+      - "9108"
+
     # Liveness — overrides the image HEALTHCHECK with the same semantics so
     # the check is visible in compose config even when the image cache is
     # primed separately.
@@ -58,5 +65,66 @@ services:
         max-size: "10m"
         max-file: "5"
 
+  # --- Monitoring ---------------------------------------------------------
+  # Budget note: the host has 7.6 GB, the bot is capped at 4.5 GB and roughly
+  # 1 GB goes to other containers, leaving ~2.1 GB. The pair below is capped
+  # at 768 MB total so it cannot compete with a render for memory — this bot
+  # has been OOM-killed before.
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    # Not published — Grafana reaches it over the compose network. To inspect
+    # the targets page directly, use `docker compose port` or an SSH tunnel.
+    expose:
+      - "9090"
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      # This instance is loopback-only; keep it that way rather than relying
+      # on anonymous access being harmless.
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      # Mount the two provisioning subdirectories individually, NOT the whole
+      # provisioning/ tree — the image ships six of them (alerting, plugins,
+      # access-control, notifiers, ...) and shadowing the parent hides those,
+      # making Grafana log an ERROR per missing directory on every start.
+      - ./monitoring/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    # Bound to loopback on purpose — reach it with
+    #   ssh -L 3000:localhost:3000 root@<host>
+    # Change GRAFANA_ADMIN_PASSWORD before ever exposing this publicly.
+    ports:
+      - "127.0.0.1:3000:3000"
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
 volumes:
   gamedata-cache:
+  prometheus-data:
+  grafana-data:

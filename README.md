@@ -427,8 +427,33 @@ The docker-compose setup includes:
 - `wows-gamedata` mounted read-only for git archive extraction
 - `.git/modules/wows-gamedata` mounted for tag access in the container
 - `gamedata-cache` named volume for persistent version caches across restarts
+- `prometheus` + `grafana` sidecars for metrics (see below)
 
 The image is a multi-stage build: builder stage installs dependencies with SSH forwarding, runtime stage is `python:3.12-slim` with `ffmpeg`, `libcairo2`, and `git`.
+
+---
+
+## Metrics
+
+The bot exports Prometheus metrics on `:9108/metrics` — render throughput by
+outcome, per-phase latency (resolve / parse / setup / render / encode /
+upload), end-to-end duration, encoded frames, output size, per-layer init
+cost, worker peak RSS, pool rebuilds, and event-loop lag. `docker compose up`
+also starts a Prometheus scraper and a Grafana instance with a pre-provisioned
+dashboard.
+
+Grafana binds to loopback only, so reach it through an SSH tunnel:
+
+```bash
+ssh -L 3000:localhost:3000 <user>@<host>
+# open http://localhost:3000 — set GRAFANA_ADMIN_PASSWORD in .env first
+```
+
+Disable with `METRICS_ENABLED=false`, or move the endpoint with
+`METRICS_PORT` (keep `monitoring/prometheus.yml` in sync).
+
+Metrics live entirely in `bot/` — the `renderer/` package has no
+`prometheus_client` dependency, so the library, CLI, and tests are unaffected.
 
 ---
 

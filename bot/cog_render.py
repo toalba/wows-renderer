@@ -20,6 +20,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from bot import metrics
 from bot.config import BotConfig
 from bot.worker import render_dual_replay, render_replay
 
@@ -291,6 +292,10 @@ class _BatchResult:
     game_version: str = ""
     render_time: float = 0.0
     pool_died: bool = field(default=False)
+    # Carried so the caller can set the terminal metrics outcome: an item that
+    # rendered fine can still be downgraded there by an oversize or failed
+    # upload, which is only known after the follow-up message is attempted.
+    tracker: metrics.RenderTracker | None = None
 
 
 class RenderCog(commands.Cog):
@@ -319,6 +324,7 @@ class RenderCog(commands.Cog):
                 )
                 broken.shutdown(wait=False, cancel_futures=True)
                 self._pool = self._make_pool()
+                metrics.record_pool_rebuild()
             return self._pool
 
     async def _submit_render(self, render_call: functools.partial) -> tuple[ProcessPoolExecutor, asyncio.Future]:
@@ -330,6 +336,7 @@ class RenderCog(commands.Cog):
         except BrokenProcessPool:
             pool = await self._replace_broken_pool(pool)
             future = loop.run_in_executor(pool, render_call)
+        metrics.track_pool_future(future)
         return pool, future
 
     async def cog_unload(self) -> None:
@@ -394,6 +401,7 @@ class RenderCog(commands.Cog):
         output_path = Path(tmp_dir) / output_name
 
         pool = self._pool  # hoisted so the outer BrokenProcessPool handler can always rebuild
+        tracked = metrics.RenderTracker("render", preset_value)
         try:
             # Download replay
             await replay.save(replay_path)
@@ -466,42 +474,81 @@ class RenderCog(commands.Cog):
                 "Render done (%.1fs); uploading %.1fMB to Discord for %s",
                 elapsed, file_size / 1024 / 1024, replay.filename,
             )
+            too_large = file_size > DISCORD_ATTACHMENT_LIMIT_MB * 1024 * 1024
+
+            # Record the render BEFORE attempting delivery. Everything above
+            # already happened; a Discord upload that later hangs must not
+            # erase it. `finish_render` in the finally still owns the counter,
+            # so the outcome can be downgraded below.
+            metrics.record_render(
+                tracked, timings,
+                output_bytes=file_size,
+                game_version=game_version,
+                game_type=game_type,
+            )
+
             t_upload_start = time.perf_counter()
-            if file_size > DISCORD_ATTACHMENT_LIMIT_MB * 1024 * 1024:
-                await asyncio.wait_for(
-                    interaction.edit_original_response(
-                        content=(
-                            f"Video is too large for Discord "
-                            f"({file_size / 1024 / 1024:.1f} MB > {DISCORD_ATTACHMENT_LIMIT_MB} MB limit)."
+            try:
+                if too_large:
+                    await asyncio.wait_for(
+                        interaction.edit_original_response(
+                            content=(
+                                f"Video is too large for Discord "
+                                f"({file_size / 1024 / 1024:.1f} MB > {DISCORD_ATTACHMENT_LIMIT_MB} MB limit)."
+                            ),
                         ),
-                    ),
-                    timeout=30,
-                )
-            else:
-                chat_filename = f"{Path(replay.filename).stem}_chat.txt"
-                result_view = _RenderResultView(
-                    build_urls=build_urls, chat_text=chat_text, chat_filename=chat_filename,
-                )
-                edit_kwargs: dict = {
-                    "content": (
-                        f"Here's your minimap replay!\n"
-                        f"{game_type} · {replay_mins}:{replay_secs:02d} · "
-                        f"v{game_version} · "
-                        f"Rendered in {elapsed:.1f}s · "
-                        f"{file_size / 1024 / 1024:.1f} MB"
-                    ),
-                    "attachments": [discord.File(str(output_path), filename=output_name)],
-                }
-                if result_view.children:
-                    edit_kwargs["view"] = result_view
-                msg = await asyncio.wait_for(
-                    interaction.edit_original_response(**edit_kwargs),
-                    timeout=120,
-                )
-                if result_view.children:
-                    result_view.message = msg
+                        timeout=30,
+                    )
+                else:
+                    chat_filename = f"{Path(replay.filename).stem}_chat.txt"
+                    result_view = _RenderResultView(
+                        build_urls=build_urls, chat_text=chat_text, chat_filename=chat_filename,
+                    )
+                    edit_kwargs: dict = {
+                        "content": (
+                            f"Here's your minimap replay!\n"
+                            f"{game_type} · {replay_mins}:{replay_secs:02d} · "
+                            f"v{game_version} · "
+                            f"Rendered in {elapsed:.1f}s · "
+                            f"{file_size / 1024 / 1024:.1f} MB"
+                        ),
+                        "attachments": [discord.File(str(output_path), filename=output_name)],
+                    }
+                    if result_view.children:
+                        edit_kwargs["view"] = result_view
+                    msg = await asyncio.wait_for(
+                        interaction.edit_original_response(**edit_kwargs),
+                        timeout=120,
+                    )
+                    if result_view.children:
+                        result_view.message = msg
+            except Exception:
+                # A hung upload raises TimeoutError — the same type as the
+                # render deadline — so without this it would be counted as a
+                # render timeout and blame the renderer for a Discord problem.
+                tracked.outcome = metrics.OUTCOME_UPLOAD_FAILED
+                log.exception("Discord delivery failed for %s (render itself succeeded)", replay.filename)
+                try:
+                    await interaction.edit_original_response(
+                        content="Render finished, but sending it to Discord failed. Please try again.",
+                    )
+                except Exception:  # noqa: BLE001 - best effort; the interaction may be dead too
+                    pass
+                return
             upload_time = time.perf_counter() - t_upload_start
             log.info("Upload complete in %.1fs for %s", upload_time, replay.filename)
+
+            # Measured after the upload so end-to-end genuinely means
+            # dispatch-to-delivered. The oversize branch only posted a text
+            # error, so it contributes no upload sample.
+            metrics.record_delivery(
+                tracked,
+                elapsed=time.monotonic() - t_start,
+                upload_seconds=None if too_large else upload_time,
+            )
+            if too_large:
+                # The render worked; the user still got no video.
+                tracked.outcome = metrics.OUTCOME_OVERSIZE
 
             # Log timing breakdown
             resolve_time = timings.get("resolve", 0)
@@ -548,19 +595,23 @@ class RenderCog(commands.Cog):
             )
 
         except TimeoutError:
+            tracked.outcome = metrics.OUTCOME_TIMEOUT
             await interaction.edit_original_response(
                 content=f"Render timed out after {self.config.render_timeout}s.",
             )
         except BrokenProcessPool:
+            tracked.outcome = metrics.OUTCOME_WORKER_CRASH
             log.exception("Render worker died for %s", replay.filename)
             await self._replace_broken_pool(pool)
             await interaction.edit_original_response(
                 content="Render worker crashed. Please try again.",
             )
         except Exception:
+            tracked.outcome = metrics.OUTCOME_ERROR
             log.exception("Render failed for %s", replay.filename)
             await interaction.edit_original_response(content="Render failed. Check the replay file and try again.")
         finally:
+            metrics.finish_render(tracked)
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
     @render.error
@@ -591,6 +642,8 @@ class RenderCog(commands.Cog):
         propagates past the per-item except Exception handler)."""
         async with semaphore:
             cfg = self.config
+            tracked = metrics.RenderTracker("render_batch", preset_value)
+            t_item_start = time.monotonic()
             render_call = functools.partial(
                 render_replay,
                 str(item.replay_path),
@@ -610,10 +663,13 @@ class RenderCog(commands.Cog):
             except BrokenProcessPool:
                 # _submit_render already tried one rebuild; if it still fails, give up on this item
                 log.warning("Could not submit batch item #%d even after pool rebuild", item.index + 1)
+                tracked.outcome = metrics.OUTCOME_WORKER_CRASH
+                metrics.finish_render(tracked)
                 return _BatchResult(
                     item=item, ok=False,
                     error="worker pool unavailable",
                     pool_died=True,
+                    tracker=tracked,
                 )
 
             try:
@@ -623,23 +679,44 @@ class RenderCog(commands.Cog):
                 ) = await asyncio.wait_for(future, timeout=timeout)
             except TimeoutError:
                 future.cancel()
-                return _BatchResult(item=item, ok=False, error=f"timed out after {int(timeout)}s")
+                tracked.outcome = metrics.OUTCOME_TIMEOUT
+                metrics.finish_render(tracked)
+                return _BatchResult(
+                    item=item, ok=False, error=f"timed out after {int(timeout)}s", tracker=tracked,
+                )
             except BrokenProcessPool:
                 log.warning("Worker died rendering batch item #%d (%s)", item.index + 1, item.filename)
+                tracked.outcome = metrics.OUTCOME_WORKER_CRASH
+                metrics.finish_render(tracked)
                 return _BatchResult(
                     item=item, ok=False,
                     error="worker crashed",
                     pool_died=True,
+                    tracker=tracked,
                 )
             except Exception as e:  # noqa: BLE001
                 log.exception("Batch render failed for item #%d (%s)", item.index + 1, item.filename)
+                tracked.outcome = metrics.OUTCOME_ERROR
+                metrics.finish_render(tracked)
                 msg = f"{type(e).__name__}: {e}" if str(e) else type(e).__name__
-                return _BatchResult(item=item, ok=False, error=msg)
+                return _BatchResult(item=item, ok=False, error=msg, tracker=tracked)
 
             # Actual worker time (excludes queue-wait inside the pool)
             worker_time = sum(
                 float(timings.get(k, 0.0)) for k in ("parse", "setup", "render", "encode")
             )
+            # No output size here — batch delivers each video via a separate
+            # follow-up message in the caller, which is also where an oversize
+            # or failed upload downgrades the outcome, so it is deliberately
+            # not finalised at this point.
+            metrics.record_render(
+                tracked, timings,
+                game_version=game_version,
+                game_type=game_type,
+            )
+            # No upload phase: this item's end-to-end ends when the render
+            # does. Delivery happens later, in the caller's stream loop.
+            metrics.record_delivery(tracked, elapsed=time.monotonic() - t_item_start)
             return _BatchResult(
                 item=item,
                 ok=True,
@@ -647,6 +724,7 @@ class RenderCog(commands.Cog):
                 replay_duration=replay_duration,
                 game_version=game_version,
                 render_time=worker_time,
+                tracker=tracked,
             )
 
     @app_commands.command(
@@ -818,8 +896,15 @@ class RenderCog(commands.Cog):
             results: list[_BatchResult] = []
             pool_died_seen = False
             for i, coro in enumerate(asyncio.as_completed(tasks)):
-                result = await coro
                 completed = i + 1
+                try:
+                    result = await coro
+                except Exception:  # noqa: BLE001
+                    # An item that dies outside its own handlers must not stop
+                    # the loop: every later item's tracker is finalised here,
+                    # so bailing out would silently drop their metrics too.
+                    log.exception("Batch item task raised outside its handlers")
+                    continue
                 results.append(result)
                 pool_died_seen = pool_died_seen or result.pool_died
 
@@ -831,6 +916,8 @@ class RenderCog(commands.Cog):
                         if size_mb > DISCORD_ATTACHMENT_LIMIT_MB:
                             result.ok = False
                             result.error = f"video too large ({size_mb:.1f} MB > {DISCORD_ATTACHMENT_LIMIT_MB} MB)"
+                            if result.tracker is not None:
+                                result.tracker.outcome = metrics.OUTCOME_OVERSIZE
                         else:
                             mins, secs = divmod(int(result.replay_duration), 60)
                             caption = (
@@ -850,6 +937,13 @@ class RenderCog(commands.Cog):
                         log.exception("Failed to upload batch result #%d", result.item.index + 1)
                         result.ok = False
                         result.error = "upload to Discord failed"
+                        if result.tracker is not None:
+                            result.tracker.outcome = metrics.OUTCOME_UPLOAD_FAILED
+
+                # Terminal outcome is only settled once delivery was attempted.
+                # No-op for items already finalised on a failure path.
+                if result.tracker is not None:
+                    metrics.finish_render(result.tracker)
 
                 await interaction.edit_original_response(
                     content=f"Rendering batch ({completed}/{len(items)})...",
@@ -990,6 +1084,8 @@ class RenderCog(commands.Cog):
 
         tmp_dir = tempfile.mkdtemp(prefix="wows_dual_")
         cfg = self.config
+        # /render_dual has no preset choice — the dual layout is fixed.
+        tracked = metrics.RenderTracker("render_dual", "dual")
         try:
             path_a = Path(tmp_dir) / Path(replay1.filename).name
             path_b = Path(tmp_dir) / f"b_{Path(replay2.filename).name}"
@@ -1057,55 +1153,90 @@ class RenderCog(commands.Cog):
                 elapsed, file_size / 1024 / 1024,
             )
             mins, secs = divmod(int(replay_duration), 60)
-            if file_size > DISCORD_ATTACHMENT_LIMIT_MB * 1024 * 1024:
-                await asyncio.wait_for(
-                    interaction.edit_original_response(
-                        content=(
-                            f"Video is too large for Discord "
-                            f"({file_size / 1024 / 1024:.1f} MB > {DISCORD_ATTACHMENT_LIMIT_MB} MB limit)."
+            too_large = file_size > DISCORD_ATTACHMENT_LIMIT_MB * 1024 * 1024
+
+            # Recorded before delivery — see the same comment in /render.
+            metrics.record_render(
+                tracked, timings,
+                output_bytes=file_size,
+                game_version=game_version,
+                game_type=game_type,
+            )
+
+            t_upload_start = time.perf_counter()
+            try:
+                if too_large:
+                    await asyncio.wait_for(
+                        interaction.edit_original_response(
+                            content=(
+                                f"Video is too large for Discord "
+                                f"({file_size / 1024 / 1024:.1f} MB > {DISCORD_ATTACHMENT_LIMIT_MB} MB limit)."
+                            ),
                         ),
-                    ),
-                    timeout=30,
-                )
-            else:
-                chat_filename = f"{Path(replay1.filename).stem}__{Path(replay2.filename).stem}_chat.txt"
-                result_view = _RenderResultView(
-                    build_urls=[], chat_text=chat_text, chat_filename=chat_filename,
-                )
-                edit_kwargs: dict = {
-                    "content": (
-                        f"Dual-perspective render — both teams visible.\n"
-                        f"{game_type} · {mins}:{secs:02d} · {num_players} players · "
-                        f"v{game_version} · Rendered in {elapsed:.1f}s · "
-                        f"{file_size / 1024 / 1024:.1f} MB"
-                    ),
-                    "attachments": [discord.File(str(output_path), filename="dual_render.mp4")],
-                }
-                if result_view.children:
-                    edit_kwargs["view"] = result_view
-                msg = await asyncio.wait_for(
-                    interaction.edit_original_response(**edit_kwargs),
-                    timeout=120,
-                )
-                if result_view.children:
-                    result_view.message = msg
+                        timeout=30,
+                    )
+                else:
+                    chat_filename = f"{Path(replay1.filename).stem}__{Path(replay2.filename).stem}_chat.txt"
+                    result_view = _RenderResultView(
+                        build_urls=[], chat_text=chat_text, chat_filename=chat_filename,
+                    )
+                    edit_kwargs: dict = {
+                        "content": (
+                            f"Dual-perspective render — both teams visible.\n"
+                            f"{game_type} · {mins}:{secs:02d} · {num_players} players · "
+                            f"v{game_version} · Rendered in {elapsed:.1f}s · "
+                            f"{file_size / 1024 / 1024:.1f} MB"
+                        ),
+                        "attachments": [discord.File(str(output_path), filename="dual_render.mp4")],
+                    }
+                    if result_view.children:
+                        edit_kwargs["view"] = result_view
+                    msg = await asyncio.wait_for(
+                        interaction.edit_original_response(**edit_kwargs),
+                        timeout=120,
+                    )
+                    if result_view.children:
+                        result_view.message = msg
+            except Exception:
+                tracked.outcome = metrics.OUTCOME_UPLOAD_FAILED
+                log.exception("Discord delivery failed for dual render (render itself succeeded)")
+                try:
+                    await interaction.edit_original_response(
+                        content="Render finished, but sending it to Discord failed. Please try again.",
+                    )
+                except Exception:  # noqa: BLE001 - best effort; the interaction may be dead too
+                    pass
+                return
+            upload_time = time.perf_counter() - t_upload_start
+
             log.info(
                 "[TIMING-DUAL] resolve=%.2fs parse=%.2fs render=%.2fs encode=%.2fs total=%.1fs frames=%d",
                 timings.get("resolve", 0), timings.get("parse", 0),
                 timings.get("render", 0), timings.get("encode", 0),
                 elapsed, int(timings.get("_frames", 0)),
             )
+            metrics.record_delivery(
+                tracked,
+                elapsed=time.monotonic() - t_start,
+                upload_seconds=None if too_large else upload_time,
+            )
+            if too_large:
+                # The render worked; the user still got no video.
+                tracked.outcome = metrics.OUTCOME_OVERSIZE
         except TimeoutError:
+            tracked.outcome = metrics.OUTCOME_TIMEOUT
             await interaction.edit_original_response(
                 content=f"Render timed out after {self.config.render_timeout}s.",
             )
         except BrokenProcessPool:
+            tracked.outcome = metrics.OUTCOME_WORKER_CRASH
             log.exception("Dual render worker died")
             await self._replace_broken_pool(pool)
             await interaction.edit_original_response(
                 content="Render worker crashed (likely out of memory). Please try again.",
             )
         except Exception as e:  # noqa: BLE001
+            tracked.outcome = metrics.OUTCOME_ERROR
             log.exception("Dual render failed")
             # merge_replays raises if the two replays aren't from the same match
             msg = str(e) or type(e).__name__
@@ -1118,6 +1249,7 @@ class RenderCog(commands.Cog):
                     content="Render failed. Check the replay files and try again.",
                 )
         finally:
+            metrics.finish_render(tracked)
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
     @render_dual.error

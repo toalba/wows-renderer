@@ -623,6 +623,9 @@ Unscheduled ideas — kept as a reference for future work.
 | `COOLDOWN_SECONDS` | `60` | Per-user rate limit |
 | `MAX_UPLOAD_MB` | `50` | Max replay file size |
 | `AUTHORIZED_GUILD_IDS` | *(empty)* | Comma-separated guild IDs allowed to use `/render_batch`; empty disables the command globally |
+| `METRICS_ENABLED` | `true` | Serve the Prometheus `/metrics` endpoint |
+| `METRICS_PORT` | `9108` | Port for `/metrics` (container-internal only) |
+| `GRAFANA_ADMIN_PASSWORD` | `admin` | Grafana admin password (compose only) |
 
 ### Slash Command Flow
 1. `/render` + `.wowsreplay` attachment
@@ -697,11 +700,76 @@ The bot touches `/tmp/bot_heartbeat` from an asyncio background task every 30s
 container unhealthy if the file is stale for more than 120s, which catches
 event-loop hangs and silent task death — not just "python is running".
 
+A companion `_loop_lag_bg` task samples loop responsiveness once a second and
+records it as `wows_bot_event_loop_lag_seconds`. The heartbeat only catches a
+loop that is fully wedged; the lag histogram shows it degrading first.
+
 Check from the host:
 ```bash
 docker compose ps           # STATUS column shows (healthy) / (unhealthy)
 docker inspect --format '{{.State.Health.Status}}' wows-renderer-bot-1
 ```
+
+### Metrics
+Prometheus metrics are served from the bot process on `:9108/metrics`
+(`bot/metrics.py`), scraped by a `prometheus` sidecar and displayed by a
+provisioned Grafana dashboard — all three in `docker-compose.yml`.
+
+**Why no multiprocess mode.** Renders run in `ProcessPoolExecutor` children,
+which normally forces `prometheus_client`'s file-backed multiprocess registry.
+Not needed here: workers return their `timings` dict to the parent, so *all*
+instrumentation lives in the parent and uses the plain default registry.
+`start_http_server` runs a daemon thread, and `fork` does not carry threads
+into the child, so workers never inherit the listening socket (`spawn` — what
+`RENDER_MAX_TASKS_PER_CHILD` silently switches to — likewise).
+
+`renderer/` deliberately has **no** prometheus dependency. It keeps reporting
+through its `timings` dict; the translation to metrics happens in `bot/`.
+
+Outcome accounting is explicit, not inferred: the cog's `except` blocks
+swallow their exceptions, so each one sets `tracker.outcome` by hand and a
+`finally` calls `metrics.finish_render()`. `RenderTracker` defaults to
+`error`, so an unhandled path is never miscounted as success.
+
+Two outcomes exist specifically to stop the dashboard blaming the renderer
+for something else. `oversize` — the render succeeded but the mp4 exceeded
+Discord's 25 MB attachment limit, so the user got nothing. `upload_failed` —
+the render succeeded and fit, but handing it to Discord failed. That one
+matters because a hung upload raises `TimeoutError`, the *same* exception
+type as the render deadline, so without a dedicated branch a Discord outage
+reads as renderer timeouts.
+
+**Recording order is load-bearing.** `record_render()` runs as soon as the
+worker future resolves, *before* delivery is attempted, so phase timings for
+a render that actually happened survive a failed upload. `record_delivery()`
+runs afterwards and measures end-to-end *including* the upload — the derived
+queue-wait panel subtracts the phase sum, and the phases include upload, so
+measuring e2e before the upload makes that panel negative.
+
+Access Grafana (bound to loopback, never published):
+```bash
+ssh -L 3000:localhost:3000 root@<host>   # then open http://localhost:3000
+```
+
+Key panels and what they answer:
+| Panel | Question |
+|---|---|
+| In-flight vs `MAX_WORKERS` | Is the pool the throughput ceiling? |
+| Worker peak RSS p99 | Are we creeping back toward the OOM cap? |
+| Renders/hr by outcome | What is actually failing, and how? |
+| Output size p99 vs 25 MB | Are videos drifting toward undeliverable? |
+| Event loop lag p99 | Is something blocking the asyncio loop? |
+
+Caveat on RSS: `ru_maxrss` is a per-process high-water mark that never resets,
+so with worker recycling disabled (the default) it covers a worker's whole
+lifetime, not one render.
+
+Caveat on latency quantiles: for the first few minutes after a deploy the
+`histogram_quantile` panels read high — `rate()` extrapolates over a series
+younger than the rate window, which breaks bucket monotonicity and pushes the
+estimate into a bucket above the real maximum. Verified locally: with an
+11-minute-old series, 1m/2m/5m/10m windows all landed within 0.5% of ground
+truth while a 15m window still showed the artifact. It self-corrects.
 
 ### Resource limits
 `docker-compose.yml` caps the bot at **4.5 GB RAM / 2 CPU cores** (4608 MiB —

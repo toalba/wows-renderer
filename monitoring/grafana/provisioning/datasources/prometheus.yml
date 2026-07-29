@@ -1,0 +1,13 @@
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    # Must match the dashboard JSON's datasource uid.
+    uid: wows-prometheus
+    editable: false
+    jsonData:
+      timeInterval: 15s

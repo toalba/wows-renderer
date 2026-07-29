@@ -28,6 +28,10 @@ class BotConfig:
     minimap_size: int = 1080
     panel_width: int = 420
     authorized_guild_ids: frozenset[int] = frozenset()
+    # Prometheus /metrics endpoint. Bound inside the container only — see the
+    # `expose:` (not `ports:`) entry in docker-compose.yml.
+    metrics_enabled: bool = True
+    metrics_port: int = 9108
 
     @classmethod
     def from_env(cls) -> BotConfig:
@@ -43,6 +47,7 @@ class BotConfig:
         # Empty string or "0" → None (no recycling, fast fork start method).
         max_tasks_raw = os.environ.get("RENDER_MAX_TASKS_PER_CHILD", "").strip()
         max_tasks_per_child = int(max_tasks_raw) if max_tasks_raw and max_tasks_raw != "0" else None
+        metrics_enabled = os.environ.get("METRICS_ENABLED", "true").strip().lower() in ("1", "true", "yes")
         return cls(
             discord_token=token,
             gamedata_path=Path(os.environ.get("GAMEDATA_PATH", "wows-gamedata/data")).resolve(),
@@ -54,4 +59,6 @@ class BotConfig:
             render_timeout=int(os.environ.get("RENDER_TIMEOUT", "120")),
             cooldown_seconds=int(os.environ.get("COOLDOWN_SECONDS", "60")),
             authorized_guild_ids=authorized_guild_ids,
+            metrics_enabled=metrics_enabled,
+            metrics_port=int(os.environ.get("METRICS_PORT", "9108")),
         )

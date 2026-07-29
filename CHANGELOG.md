@@ -4,6 +4,19 @@ All notable changes to `wows-minimap-renderer` are documented here.
 
 ## [Unreleased]
 
+### Added
+
+#### Prometheus metrics + Grafana dashboard
+- **`bot/metrics.py`** — the per-phase `timings` dict that previously only reached a `[TIMING]` log line is now also exported as Prometheus metrics: render counts by command/preset/outcome, per-phase latency histograms (resolve/parse/setup/render/encode/upload), end-to-end duration, frames encoded, output size, per-layer init cost, worker peak RSS, pool rebuilds, gamedata cache populates, and event-loop lag.
+- **`/metrics` endpoint** on port 9108 (`METRICS_PORT`, disable with `METRICS_ENABLED=false`), served from a daemon thread in the bot process. No `prometheus_client` multiprocess mode: render workers return their timings to the parent, so a plain single-process registry is correct — and `fork`/`spawn` never carry the listening socket into a worker.
+- **`monitoring/`** — Prometheus scrape config plus a provisioned Grafana dashboard (14 panels: throughput by outcome, phase p95, in-flight vs `MAX_WORKERS`, worker RSS vs the 4.5 GB cap, output size vs Discord's 25 MB limit, loop lag, slowest layers, derived queue wait).
+- **`prometheus` + `grafana` services** in `docker-compose.yml`, capped at 512 MB / 256 MB. Prometheus is unpublished; Grafana binds to `127.0.0.1:3000` only (reach it over an SSH tunnel). Set `GRAFANA_ADMIN_PASSWORD` before exposing it anywhere.
+- **`oversize` and `upload_failed` render outcomes** — a render that succeeds but exceeds Discord's attachment limit, or that fails to reach Discord at all, is counted separately from `success`, since the user receives no video either way. `upload_failed` is load-bearing: a hung upload raises `TimeoutError`, the same exception type as the render deadline, so without it a Discord outage would be recorded as renderer timeouts.
+- **Phase timings are recorded before delivery is attempted**, so a render that completed is never erased from the histograms by a subsequent upload failure. End-to-end is measured *after* the upload and therefore includes it, which is what makes the derived queue-wait panel (e2e minus the phase sum) correct rather than negative.
+- **Phase histogram buckets tuned against measured renders**, not guesses — dense at 0.1-1s (encode lands at 0.2-0.7s; with only 0.25/1.0 around it, 44 of 47 real samples fell in one bucket and p99 reported 0.99s against an observed max of 0.7s) and at 15-120s (where the render phase lives).
+- **Worker peak RSS** reported through the `timings` dict (`_peak_rss_bytes`), leaving the worker's 8-tuple return contract unchanged. Note `ru_maxrss` is a per-process high-water mark, so with worker recycling disabled it spans a worker's whole lifetime, not one render.
+- **`_loop_lag_bg`** — 1s event-loop responsiveness sampling, complementing the 30s liveness heartbeat which only catches a fully wedged loop.
+
 ### Changed
 - **`/render_dual` is now available on every server** — removed the `AUTHORIZED_GUILD_IDS` gate. A dedicated 10-min per-user cooldown now applies on all guilds (the previously shared `_batch_cooldown` only rate-limited authorized guilds, which would have left dual renders uncapped everywhere else). `/render_batch` remains gated.
 

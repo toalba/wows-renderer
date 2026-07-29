@@ -1,0 +1,21 @@
+# Prometheus scrape config for the render bot.
+#
+# `bot` resolves over the compose network; the port matches METRICS_PORT
+# (bot/config.py, default 9108). Change both together.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: wows-renderer
+    static_configs:
+      - targets:
+          - bot:9108
+        labels:
+          service: wows-renderer
+
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090

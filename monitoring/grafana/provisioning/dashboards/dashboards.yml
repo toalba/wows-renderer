@@ -1,0 +1,14 @@
+apiVersion: 1
+
+providers:
+  - name: wows-renderer
+    type: file
+    # Dashboards are read-only in the UI because the source of truth is the
+    # JSON committed under monitoring/grafana/dashboards/. Edit there, then
+    # restart Grafana (or let the 30s poll pick it up).
+    allowUiUpdates: false
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

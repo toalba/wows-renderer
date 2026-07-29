@@ -6,12 +6,36 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from multiprocessing import Queue
 
 log = logging.getLogger(__name__)
 
 # Preset names — used by cog as app_commands.Choice values
 PRESETS = ["full", "map", "playerdata"]
+
+
+def _peak_rss_bytes() -> float:
+    """Peak resident set size of this worker process, in bytes.
+
+    Reported back through the ``timings`` dict rather than the return tuple,
+    which is unpacked at three call sites and contract-tested.
+
+    ``ru_maxrss`` is a high-water mark that never resets, so with
+    ``RENDER_MAX_TASKS_PER_CHILD`` unset (the prod default — long-lived forked
+    workers) this covers the worker's entire lifetime, not one render. That is
+    still the signal we want: whether a worker is creeping toward the 4.5 GB
+    cgroup cap.
+
+    Returns 0.0 where unavailable — ``resource`` is Unix-only.
+    """
+    try:
+        import resource
+    except ImportError:  # Windows
+        return 0.0
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # Linux reports KiB, macOS reports bytes.
+    return float(usage) if sys.platform == "darwin" else float(usage) * 1024
 
 
 def _format_chat_log(replay) -> str:
@@ -207,6 +231,7 @@ def render_replay(
 
     chat_text = _format_chat_log(replay)
     game_type = replay.meta.get("gameType", "Unknown")
+    timings["_peak_rss_bytes"] = _peak_rss_bytes()
     return (
         output_path, replay.duration, timings, replay.game_version,
         len(replay.players), game_type, build_urls, chat_text,
@@ -332,6 +357,7 @@ def render_dual_replay(
 
     chat_text = _format_chat_log(merged)
     game_type = merged.meta.get("gameType", "Unknown") if hasattr(merged, "meta") else "Unknown"
+    timings["_peak_rss_bytes"] = _peak_rss_bytes()
     return (
         output_path, merged.duration, timings, merged.game_version,
         len(merged.players), game_type, [], chat_text,
