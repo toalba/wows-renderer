@@ -20,8 +20,8 @@
     {
       "id": 1,
       "type": "stat",
-      "title": "Renders (24h)",
-      "description": "All render attempts across /render, /render_batch and /render_dual.",
+      "title": "Renders (since bot start)",
+      "description": "All render attempts across /render, /render_batch and /render_dual. Reads the counter directly rather than increase() over a window: these series are label-scoped and do not exist until their first render, so increase() never sees the 0->1 transition and silently omits the first render of every command/preset/outcome combination. Resets when the bot restarts; use the renders-per-hour panel for the windowed view.",
       "datasource": { "type": "prometheus", "uid": "wows-prometheus" },
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
       "fieldConfig": {
@@ -43,7 +43,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "wows-prometheus" },
-          "expr": "sum(increase(wows_renders_total[24h]))",
+          "expr": "sum(wows_renders_total) or vector(0)",
           "instant": true
         }
       ]
@@ -51,8 +51,8 @@
     {
       "id": 2,
       "type": "stat",
-      "title": "Success rate (24h)",
-      "description": "Share of attempts that produced a delivered video. `oversize` counts as a failure — the render worked but the user got nothing.",
+      "title": "Success rate (since bot start)",
+      "description": "Share of attempts that produced a delivered video. `oversize` and `upload_failed` count as failures — the render worked but the user got nothing. Reads the counters directly for the same reason as the renders tile. Shows a dash, not 0%, when no render has happened yet: 0% would read as total failure.",
       "datasource": { "type": "prometheus", "uid": "wows-prometheus" },
       "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
       "fieldConfig": {
@@ -61,6 +61,7 @@
           "min": 0,
           "max": 1,
           "decimals": 1,
+          "noValue": "—",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -82,7 +83,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "wows-prometheus" },
-          "expr": "sum(increase(wows_renders_total{outcome=\"success\"}[24h])) / clamp_min(sum(increase(wows_renders_total[24h])), 1)",
+          "expr": "sum(wows_renders_total{outcome=\"success\"}) / clamp_min(sum(wows_renders_total), 1)",
           "instant": true
         }
       ]
