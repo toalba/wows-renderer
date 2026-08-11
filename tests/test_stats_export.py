@@ -115,23 +115,34 @@ def test_accuracy_matches_hits_over_shots(battle_results):
 
 
 def test_ribbon_columns_read_the_tail_slots(battle_results):
-    """Citadels/pens/overpens/shatters come from raw[481 + ribbon_id],
-    not from summing wire events."""
+    """Tuple order is (citadels, penetrations, overpens, shatters), pinned by
+    exact assertion. Reads come from raw[481 + ribbon_id], not wire events."""
     from renderer.stats_export import ribbon_columns
 
-    totals = [ribbon_columns(p) for p in battle_results.players.values()]
-    # The sample is a clan battle; at least one player landed citadels
-    # and at least one landed penetrations.
+    by_id = {p.db_id: ribbon_columns(p) for p in battle_results.players.values()}
+    # All four values distinct and non-zero; any pairwise column swap fails here.
+    assert by_id[100006] == (3, 25, 17, 1)  # (citadels, pens, overpens, shatters)
+    # Cheap smoke check: at least one player landed citadels and penetrations.
+    totals = list(by_id.values())
     assert any(t[0] > 0 for t in totals), "expected some citadels"
     assert any(t[1] > 0 for t in totals), "expected some penetrations"
 
 
 def test_ribbon_columns_zero_out_on_short_rows():
     """If a patch moves the tail offset the row shortens; report zeros
-    rather than whatever integer happens to sit at that index."""
+    rather than whatever integer happens to sit at that index.
+
+    The guard checks len(raw) >= BR_ROW_LEN to catch schema changes
+    where the indices would be out of bounds or partially readable."""
     from wows_replay_parser.battle_results import PlayerBattleResult
 
     from renderer.stats_export import ribbon_columns
 
+    # All indices out of bounds — still returns zeros with or without guard.
     truncated = PlayerBattleResult(db_id=1, stats={}, extra={}, raw=[0] * 400)
     assert ribbon_columns(truncated) == (0, 0, 0, 0)
+
+    # Indices 489 in bounds, but 495/496/497 out of bounds. Without the guard
+    # this would return (7, 0, 0, 0) — a partial mix. The guard ensures all-or-nothing.
+    partial = PlayerBattleResult(db_id=2, stats={}, extra={}, raw=[7] * 492)
+    assert ribbon_columns(partial) == (0, 0, 0, 0)
