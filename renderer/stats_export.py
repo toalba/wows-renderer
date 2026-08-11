@@ -11,7 +11,11 @@ nothing about replays.
 """
 from __future__ import annotations
 
+import dataclasses
+from dataclasses import dataclass
 from typing import Any
+
+from renderer.death_reasons import death_reason_label
 
 # Length of a playersPublicInfo row on the schema this module targets.
 # The four ribbon columns read raw[481 + ribbon_id]; a shorter row means
@@ -112,4 +116,221 @@ def ribbon_columns(player: Any) -> tuple[int, int, int, int]:
         player.ribbon_count(RIBBON_PENETRATION),
         player.ribbon_count(RIBBON_OVERPEN),
         player.ribbon_count(RIBBON_SHATTER),
+    )
+
+
+@dataclass(frozen=True)
+class PlayerStats:
+    """One row of the statistics board. All display-ready."""
+
+    name: str
+    clan_tag: str
+    ship_name: str
+    ship_class: str          # DD / CA / BB / CV / SS / AUX; "" if unknown
+    team: int                # display team: 0 = recorder's side, 1 = other
+    is_self: bool
+
+    damage: int
+    received: int
+    spotting: int
+    potential: int
+
+    kills: int
+    hits: int
+    shots: int
+    accuracy: float | None   # None when the main battery never fired
+    fires: int
+    floods: int
+    citadels: int
+    penetrations: int
+    overpens: int
+    shatters: int
+
+    crits: int
+    major_crits: int
+    module_breaks: int
+
+    caps: int
+    caps_reset: int
+    first_spots: int
+    torps_spotted: int
+    planes_killed: int
+    aa_damage: int
+    distance_km: float
+    xp: int
+
+    hp_remaining: int
+    max_health: int
+    life_time_sec: int
+    killed_by: str           # "" when the player survived
+    killer_weapon: str       # "" when the player survived
+
+
+@dataclass(frozen=True)
+class MatchStats:
+    """Everything the board needs. Picklable, cairo-free."""
+
+    players: tuple[PlayerStats, ...]   # pre-sorted for display
+    map_name: str
+    game_type: str
+    duration_sec: int
+    winner_team: int                   # display team; -1 = draw/unknown
+    neutral_perspective: bool          # True for dual renders (no recorder)
+
+
+def _display_team(raw_team_id: int, self_team_id: int) -> int:
+    """Trap 5: the recorder may be raw team 0 or 1. Display team 0 is
+    always the recorder's side, so colours match the video."""
+    return 0 if raw_team_id == self_team_id else 1
+
+
+def _player_row(
+    player: Any,
+    ships_db: dict[int, dict],
+    self_team_id: int,
+    self_db_id: int,
+    name_by_db_id: dict[int, str],
+) -> PlayerStats:
+    stats = player.stats
+    ship_id = int(_num(stats, "vehicle_type_id"))
+    ship = ships_db.get(ship_id) or {}
+    species = str(ship.get("species") or "")
+
+    killer_id = int(_num(stats, "killer_db_id"))
+    survived = int(_num(stats, "remained_hp")) > 0
+    killed_by = "" if survived else name_by_db_id.get(killer_id, "")
+    weapon = "" if survived else death_reason_label(int(_num(stats, "killer_weapon")))
+
+    citadels, pens, overpens, shatters = ribbon_columns(player)
+
+    return PlayerStats(
+        name=str(stats.get("name") or ""),
+        clan_tag=str(stats.get("clan_tag") or ""),
+        ship_name=str(ship.get("short_name") or ship.get("name") or ship_id),
+        ship_class=SPECIES_TAG.get(species, ""),
+        team=_display_team(int(_num(stats, "team_id")), self_team_id),
+        is_self=player.db_id == self_db_id,
+        damage=ship_damage(stats),
+        received=total_received_damage(stats),
+        spotting=int(_num(stats, "scouting_damage")),
+        potential=potential_damage(stats),
+        kills=int(_num(stats, "ships_killed")),
+        hits=main_battery_hits(stats),
+        shots=main_battery_shots(stats),
+        accuracy=accuracy(stats),
+        fires=int(_num(stats, "hits_fire")),
+        floods=int(_num(stats, "hits_flood")),
+        citadels=citadels,
+        penetrations=pens,
+        overpens=overpens,
+        shatters=shatters,
+        crits=int(_num(stats, "module_crits")),
+        major_crits=int(_num(stats, "module_major_crits")),
+        module_breaks=int(_num(stats, "module_breaks")),
+        caps=int(_num(stats, "capture_points")),
+        caps_reset=int(_num(stats, "dropped_capture_points")),
+        first_spots=int(
+            _num(stats, "first_ships_spotted_by_ship")
+            + _num(stats, "first_ships_spotted_by_plane")
+        ),
+        torps_spotted=int(_num(stats, "tpds_spotted")),
+        planes_killed=int(_num(stats, "planes_killed_by_ship")),
+        aa_damage=int(_num(stats, "damage_airdefense")),
+        distance_km=_num(stats, "distance"),
+        xp=int(_num(stats, "exp")),
+        hp_remaining=int(_num(stats, "remained_hp")),
+        max_health=int(_num(stats, "max_health")),
+        life_time_sec=int(_num(stats, "life_time_sec")),
+        killed_by=killed_by,
+        killer_weapon=weapon,
+    )
+
+
+def _anonymize(rows: list[PlayerStats]) -> list[PlayerStats]:
+    """Replace names with stable positional labels and drop clan tags.
+
+    Numbered over the display-sorted list so the same replay always
+    produces the same labels.
+    """
+    return [
+        dataclasses.replace(row, name=f"Player {i + 1}", clan_tag="")
+        for i, row in enumerate(rows)
+    ]
+
+
+def build_match_stats(
+    *,
+    results: Any,
+    ships_db: dict[int, dict],
+    self_team_id: int,
+    meta: dict[str, Any],
+    flags: frozenset[str] = frozenset(),
+    neutral_perspective: bool = False,
+) -> MatchStats:
+    """Assemble display-ready stats. Pure — no replay, no gamedata I/O."""
+    name_by_db_id = {
+        db_id: str(p.stats.get("name") or "")
+        for db_id, p in results.players.items()
+    }
+    self_db_id = results.own_db_id
+
+    rows = [
+        _player_row(p, ships_db, self_team_id, self_db_id, name_by_db_id)
+        for p in results.players.values()
+    ]
+    rows.sort(key=lambda r: (r.team, -r.damage, r.name))
+
+    if "anonymize" in flags:
+        rows = _anonymize(rows)
+
+    raw_winner = results.common.get("winner_team_id")
+    winner = (
+        _display_team(int(raw_winner), self_team_id)
+        if isinstance(raw_winner, int) and raw_winner >= 0
+        else -1
+    )
+
+    return MatchStats(
+        players=tuple(rows),
+        map_name=str(meta.get("map_name") or ""),
+        game_type=str(meta.get("game_type") or "Unknown"),
+        duration_sec=int(meta.get("duration_sec") or 0),
+        winner_team=winner,
+        neutral_perspective=neutral_perspective,
+    )
+
+
+def extract_match_stats(
+    replay: Any,
+    vgd: Any,
+    flags: frozenset[str] = frozenset(),
+    *,
+    neutral_perspective: bool = False,
+) -> MatchStats | None:
+    """Worker-facing entry point. Returns None when the replay carries no
+    BattleResults packet — an incomplete or crashed recording."""
+    results = replay.battle_results()
+    if results is None or not results.players:
+        return None
+
+    self_team_id = 0
+    if not neutral_perspective:
+        for player in getattr(replay, "players", ()):
+            if getattr(player, "relation", None) == 0:
+                self_team_id = int(getattr(player, "team_id", 0) or 0)
+                break
+
+    meta = {
+        "map_name": getattr(replay, "map_name", "") or "",
+        "game_type": (getattr(replay, "meta", {}) or {}).get("gameType", "Unknown"),
+        "duration_sec": int(getattr(replay, "duration", 0) or 0),
+    }
+
+    return build_match_stats(
+        results=results,
+        ships_db=(vgd.ships_db if vgd is not None else {}),
+        self_team_id=self_team_id,
+        meta=meta,
+        flags=flags,
+        neutral_perspective=neutral_perspective,
     )

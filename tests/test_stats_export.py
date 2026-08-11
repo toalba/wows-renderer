@@ -146,3 +146,89 @@ def test_ribbon_columns_zero_out_on_short_rows():
     # this would return (7, 0, 0, 0) — a partial mix. The guard ensures all-or-nothing.
     partial = PlayerBattleResult(db_id=2, stats={}, extra={}, raw=[7] * 492)
     assert ribbon_columns(partial) == (0, 0, 0, 0)
+
+
+def _build(battle_results, **kw):
+    from renderer.stats_export import build_match_stats
+
+    defaults = dict(
+        results=battle_results,
+        ships_db={},
+        self_team_id=0,
+        meta={"map_name": "Tierra del Fuego", "game_type": "ClanBattle", "duration_sec": 581},
+        flags=frozenset(),
+    )
+    defaults.update(kw)
+    return build_match_stats(**defaults)
+
+
+def test_players_are_grouped_by_display_team_then_damage_desc(battle_results):
+    stats = _build(battle_results)
+    teams = [p.team for p in stats.players]
+    assert teams == sorted(teams), "team 0 block must precede team 1 block"
+
+    for team in (0, 1):
+        block = [p.damage for p in stats.players if p.team == team]
+        assert block == sorted(block, reverse=True)
+
+
+def test_self_team_becomes_display_team_zero(battle_results):
+    """Trap 5: the recorder's raw team id is 0 or 1 depending on the
+    replay. After the swap their team always renders as 0."""
+    swapped = _build(battle_results, self_team_id=1)
+    raw_team_1_names = {
+        p.stat("name") for p in battle_results.players.values() if p.team_id == 1
+    }
+    display_0_names = {p.name for p in swapped.players if p.team == 0}
+    assert display_0_names == raw_team_1_names
+
+
+def test_anonymize_replaces_names_and_drops_clan_tags(battle_results):
+    stats = _build(battle_results, flags=frozenset({"anonymize"}))
+    assert all(p.name.startswith("Player ") for p in stats.players)
+    assert all(p.clan_tag == "" for p in stats.players)
+    assert len({p.name for p in stats.players}) == len(stats.players)
+
+
+def test_killed_by_resolves_to_a_name_and_weapon(battle_results):
+    """killer_db_id joins back to another row in the same payload."""
+    stats = _build(battle_results)
+    killed = [p for p in stats.players if p.killed_by]
+    assert killed, "fixture should contain at least one dead player"
+    assert all(p.killer_weapon for p in killed)
+
+
+def test_survivors_have_no_killer(battle_results):
+    stats = _build(battle_results)
+    for p in stats.players:
+        if p.hp_remaining > 0:
+            assert p.killed_by == ""
+            assert p.killer_weapon == ""
+
+
+def test_unknown_ship_id_falls_back_to_the_raw_index(battle_results):
+    stats = _build(battle_results, ships_db={})
+    assert all(p.ship_name for p in stats.players)
+    assert all(p.ship_class == "" for p in stats.players)
+
+
+def test_ship_name_and_class_resolve_from_ships_db(battle_results):
+    sample = next(iter(battle_results.players.values()))
+    ship_id = int(sample.stat("vehicle_type_id"))
+    db = {ship_id: {"name": "PFSC210_Marseille", "short_name": "Marseille",
+                    "species": "Cruiser", "level": 10, "index": "PFSC210"}}
+    stats = _build(battle_results, ships_db=db)
+    hit = [p for p in stats.players if p.ship_name == "Marseille"]
+    assert hit and hit[0].ship_class == "CA"
+
+
+def test_extract_returns_none_without_a_results_packet():
+    """Incomplete or crashed replays carry no 0x22 packet. The button
+    hides itself on None, so this path must not raise."""
+    from renderer.stats_export import extract_match_stats
+
+    class _NoResults:
+        def battle_results(self):
+            return None
+
+    assert extract_match_stats(_NoResults(), vgd=None) is None
