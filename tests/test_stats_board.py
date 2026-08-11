@@ -99,6 +99,68 @@ def test_theme_changes_output():
         render_stats_board(_match(), theme="brandon")
 
 
+def test_long_name_is_capped_and_ellipsised():
+    """A long clan tag + player name (and a long ship name) must not widen
+    the sheet past MAX_TEXT_CELL_W, and the overflow must be shortened
+    with a trailing ellipsis rather than bleeding into the next column.
+
+    None of the other fixtures use content long enough to reach the cap,
+    so without this test the cap/ellipsis mechanism has zero coverage.
+    """
+    import cairo
+
+    from renderer.stats_board import (
+        COL_GAP,
+        COLUMNS,
+        FONT,
+        FONT_SIZE,
+        MAX_TEXT_CELL_W,
+        _ellipsize,
+        _measure,
+        render_stats_board,
+    )
+
+    long_player = _player(
+        "SuperLongPlayerNameThatIsDefinitelyLongEnoughToOverflowTheColumn",
+        0, 100_000,
+        clan_tag="REALLYLONGCLANTAG12345",
+        ship_name="AnExtremelyLongShipNameForTestingColumnOverflowBehaviour",
+    )
+    m = MatchStats(
+        players=(long_player,), map_name="Map", game_type="Random",
+        duration_sec=100, winner_team=0, neutral_perspective=False,
+    )
+
+    name_idx = next(i for i, c in enumerate(COLUMNS) if c.key == "name")
+    ship_idx = next(i for i, c in enumerate(COLUMNS) if c.key == "ship_name")
+
+    # The cap keeps these columns from growing with unbounded content —
+    # this is the property that keeps one long name from widening the
+    # whole sheet. Asserted against the constant, not a hardcoded 278.0,
+    # so a deliberate future change to MAX_TEXT_CELL_W doesn't break this.
+    widths = _measure(m)
+    assert widths[name_idx] == pytest.approx(MAX_TEXT_CELL_W + COL_GAP)
+    assert widths[ship_idx] == pytest.approx(MAX_TEXT_CELL_W + COL_GAP)
+
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1)
+    cr = cairo.Context(surface)
+    cr.select_font_face(FONT, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+    cr.set_font_size(FONT_SIZE)
+
+    full_text = COLUMNS[name_idx].fmt(long_player)
+    # Sanity-check the fixture actually overflows the cap; otherwise the
+    # assertions below would pass trivially without exercising anything.
+    assert cr.text_extents(full_text).width > MAX_TEXT_CELL_W
+
+    truncated = _ellipsize(cr, full_text, MAX_TEXT_CELL_W)
+    assert truncated != full_text
+    assert truncated.endswith("…")
+    assert cr.text_extents(truncated).width <= MAX_TEXT_CELL_W
+
+    # And the whole thing still renders to a valid PNG with no crash.
+    assert render_stats_board(m)[:8] == b"\x89PNG\r\n\x1a\n"
+
+
 def test_golden_image(tmp_path):
     from renderer.stats_board import render_stats_board
     from tests.golden_image import compare_images, load_reference

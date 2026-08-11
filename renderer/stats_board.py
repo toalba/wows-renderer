@@ -39,9 +39,10 @@ FONT_SIZE = 15
 # into the next column.
 MAX_TEXT_CELL_W = 260.0
 
-# Vertical breathing room between the two team blocks, on top of the
-# per-row height. Kept smaller than PAD_X so the height formula below
-# (which reserves PAD_X worth of bottom slack) never clips the last row.
+# Vertical breathing room inserted at each team transition, on top of the
+# per-row height. render_stats_board sizes the surface for however many
+# transitions _team_gaps() actually counts, so this isn't limited to
+# exactly one gap.
 TEAM_GAP = 10.0
 
 
@@ -178,6 +179,29 @@ def _baseline_in(cr: cairo.Context, top: float, box_h: float) -> float:
     return top + (box_h + ascent - descent) / 2
 
 
+def _cell_x(x: float, w: float, text_w: float, align: str) -> float:
+    """Text origin x for one cell: flush right (minus half the inter-column
+    gap) for right-aligned columns, flush left (plus half the gap) for
+    left-aligned ones. Shared by the header and every row so the two never
+    drift apart."""
+    if align == "right":
+        return x + w - COL_GAP / 2 - text_w
+    return x + COL_GAP / 2
+
+
+def _team_gaps(players: tuple[PlayerStats, ...]) -> int:
+    """Number of team transitions between consecutive rows.
+
+    Players arrive pre-sorted by team, so in the expected case this is 0 or
+    1 (one gap between the two team blocks). Counting transitions directly,
+    rather than assuming "at most one", means the height formula stays
+    correct even if that sort contract were ever violated or a third team
+    value appeared — instead of silently clipping the last row by
+    (n_gaps - 1) * TEAM_GAP.
+    """
+    return sum(1 for a, b in zip(players, players[1:], strict=False) if a.team != b.team)
+
+
 def _outcome_text(stats: MatchStats) -> str:
     """Victory/Defeat is recorder-relative and meaningless without a
     recorder — dual/merged renders have none, so they get a neutral,
@@ -231,7 +255,7 @@ def _draw_header(cr: cairo.Context, widths: list[float], xs: list[float], y: flo
     for col, x, w in zip(COLUMNS, xs, widths, strict=True):
         text = col.label
         tw = cr.text_extents(text).width
-        tx = x + w - COL_GAP / 2 - tw if col.align == "right" else x + COL_GAP / 2
+        tx = _cell_x(x, w, tw, col.align)
         cr.move_to(tx, baseline)
         cr.show_text(text)
 
@@ -269,7 +293,7 @@ def _draw_row(
         if col.align == "left":
             text = _ellipsize(cr, text, w - COL_GAP)
         tw = cr.text_extents(text).width
-        tx = x + w - COL_GAP / 2 - tw if col.align == "right" else x + COL_GAP / 2
+        tx = _cell_x(x, w, tw, col.align)
         cr.set_source_rgba(color[0], color[1], color[2], alpha)
         cr.move_to(tx, baseline)
         cr.show_text(text)
@@ -280,7 +304,10 @@ def render_stats_board(stats: MatchStats, theme: str = "default") -> bytes:
     widths = _measure(stats)
     xs = _column_x(widths)
     width = sum(widths) + 2 * PAD_X
-    height = TITLE_H + HEADER_H + len(stats.players) * ROW_H + PAD_X
+    height = (
+        TITLE_H + HEADER_H + len(stats.players) * ROW_H
+        + _team_gaps(stats.players) * TEAM_GAP + PAD_X
+    )
 
     surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, max(1, round(width)), max(1, round(height)))
     cr = cairo.Context(surface)
