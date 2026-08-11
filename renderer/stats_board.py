@@ -222,13 +222,13 @@ def _draw_title(cr: cairo.Context, stats: MatchStats, width: float, theme: str) 
     cr.stroke()
 
 
-def _draw_header(cr: cairo.Context, widths: list[float], y: float) -> None:
+def _draw_header(cr: cairo.Context, widths: list[float], xs: list[float], y: float) -> None:
     cr.select_font_face(FONT, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
     cr.set_font_size(FONT_SIZE)
     baseline = _baseline_in(cr, y, HEADER_H)
     cr.set_source_rgb(*LABEL_SECONDARY)
 
-    for col, x, w in zip(COLUMNS, _column_x(widths), widths, strict=True):
+    for col, x, w in zip(COLUMNS, xs, widths, strict=True):
         text = col.label
         tw = cr.text_extents(text).width
         tx = x + w - COL_GAP / 2 - tw if col.align == "right" else x + COL_GAP / 2
@@ -243,7 +243,9 @@ def _draw_header(cr: cairo.Context, widths: list[float], y: float) -> None:
     cr.stroke()
 
 
-def _draw_row(cr: cairo.Context, player: PlayerStats, widths: list[float], y: float, theme: str) -> None:
+def _draw_row(
+    cr: cairo.Context, player: PlayerStats, widths: list[float], xs: list[float], y: float, theme: str,
+) -> None:
     table_w = sum(widths)
 
     r, g, b, a = _row_fill(player, theme)
@@ -261,7 +263,7 @@ def _draw_row(cr: cairo.Context, player: PlayerStats, widths: list[float], y: fl
     cr.set_font_size(FONT_SIZE)
     baseline = _baseline_in(cr, y, ROW_H)
 
-    for col, x, w in zip(COLUMNS, _column_x(widths), widths, strict=True):
+    for col, x, w in zip(COLUMNS, xs, widths, strict=True):
         text = col.fmt(player)
         color, alpha = _cell_style(col, player)
         if col.align == "left":
@@ -276,6 +278,7 @@ def _draw_row(cr: cairo.Context, player: PlayerStats, widths: list[float], y: fl
 def render_stats_board(stats: MatchStats, theme: str = "default") -> bytes:
     """Render the post-battle statistics board and return PNG bytes."""
     widths = _measure(stats)
+    xs = _column_x(widths)
     width = sum(widths) + 2 * PAD_X
     height = TITLE_H + HEADER_H + len(stats.players) * ROW_H + PAD_X
 
@@ -285,14 +288,14 @@ def render_stats_board(stats: MatchStats, theme: str = "default") -> bytes:
     cr.paint()
 
     _draw_title(cr, stats, width, theme)
-    _draw_header(cr, widths, TITLE_H)
+    _draw_header(cr, widths, xs, TITLE_H)
 
     y: float = TITLE_H + HEADER_H
     prev_team: int | None = None
     for player in stats.players:
         if prev_team is not None and player.team != prev_team:
             y += TEAM_GAP
-        _draw_row(cr, player, widths, y, theme)
+        _draw_row(cr, player, widths, xs, y, theme)
         y += ROW_H
         prev_team = player.team
 
