@@ -29,6 +29,17 @@ IDX_CLAN_TAG = 3
 # the parser's schema if a field gets inserted upstream.
 IDX_KILLER_DB_ID = len(PLAYER_INFO_FIELDS) + VEH_BASE_RESULT_FIELDS.index("killer_db_id")
 
+# interactions/buildingInteractions are dicts keyed by *other players'*
+# real account db_ids (per-opponent stat breakdowns) — not covered by the
+# id_map remap above because the ids live as dict keys, not row values.
+# Nothing in the stats board reads either field, so drop them outright
+# rather than remap: stronger privacy guarantee, and no id_map lookup
+# needed for opponents (buildings, bots) that aren't in the payload.
+IDX_INTERACTIONS = len(PLAYER_INFO_FIELDS) + VEH_BASE_RESULT_FIELDS.index("interactions")
+IDX_BUILDING_INTERACTIONS = (
+    len(PLAYER_INFO_FIELDS) + VEH_BASE_RESULT_FIELDS.index("buildingInteractions")
+)
+
 
 def main(src: Path) -> None:
     doc = json.loads(src.read_text())
@@ -52,6 +63,8 @@ def main(src: Path) -> None:
         killer_key = str(row[IDX_KILLER_DB_ID])
         if killer_key in id_map:
             row[IDX_KILLER_DB_ID] = id_map[killer_key]
+        row[IDX_INTERACTIONS] = {}
+        row[IDX_BUILDING_INTERACTIONS] = {}
         sanitised[str(id_map[old_key])] = row
 
     raw["playersPublicInfo"] = sanitised
