@@ -91,3 +91,25 @@ def accuracy(stats: dict[str, Any]) -> float | None:
     if shots <= 0:
         return None
     return 100.0 * main_battery_hits(stats) / shots
+
+
+def ribbon_columns(player: Any) -> tuple[int, int, int, int]:
+    """(citadels, penetrations, overpens, shatters) for one player.
+
+    Reads the server's authoritative end-of-match tallies from the raw
+    row tail via PlayerBattleResult.ribbon_count(), which indexes
+    raw[481 + ribbon_id].
+
+    That base offset was extracted from build 12267945 (patch 15.3) and
+    the parser warns it may differ on earlier builds. Guard on the row
+    width: a short row means the schema moved, and four zeroed columns
+    beat four columns of plausible garbage.
+    """
+    if len(getattr(player, "raw", ())) < BR_ROW_LEN:
+        return (0, 0, 0, 0)
+    return (
+        player.ribbon_count(RIBBON_CITADEL),
+        player.ribbon_count(RIBBON_PENETRATION),
+        player.ribbon_count(RIBBON_OVERPEN),
+        player.ribbon_count(RIBBON_SHATTER),
+    )

@@ -88,3 +88,50 @@ def test_potential_damage_sums_the_four_agro_fields(battle_results):
     p = next(iter(battle_results.players.values()))
     expected = sum(p.stat(f"agro_{x}") or 0 for x in ("art", "tpd", "air", "dbomb"))
     assert potential_damage(p.stats) == int(expected)
+
+
+def test_accuracy_is_none_when_main_guns_never_fired(battle_results):
+    """Submarines and pure torpedo boats fire no main battery. Accuracy
+    must be None (renders as a dash), never 0.0 or a ZeroDivisionError."""
+    from renderer.stats_export import accuracy
+
+    p = next(iter(battle_results.players.values()))
+    stats = {k: 0 for k in p.stats}
+    assert accuracy(stats) is None
+
+
+def test_accuracy_matches_hits_over_shots(battle_results):
+    from renderer.stats_export import accuracy, main_battery_hits, main_battery_shots
+
+    shooters = [
+        p for p in battle_results.players.values()
+        if main_battery_shots(p.stats) > 0
+    ]
+    assert shooters, "fixture should contain at least one gunship"
+
+    p = shooters[0]
+    expected = 100.0 * main_battery_hits(p.stats) / main_battery_shots(p.stats)
+    assert accuracy(p.stats) == pytest.approx(expected)
+
+
+def test_ribbon_columns_read_the_tail_slots(battle_results):
+    """Citadels/pens/overpens/shatters come from raw[481 + ribbon_id],
+    not from summing wire events."""
+    from renderer.stats_export import ribbon_columns
+
+    totals = [ribbon_columns(p) for p in battle_results.players.values()]
+    # The sample is a clan battle; at least one player landed citadels
+    # and at least one landed penetrations.
+    assert any(t[0] > 0 for t in totals), "expected some citadels"
+    assert any(t[1] > 0 for t in totals), "expected some penetrations"
+
+
+def test_ribbon_columns_zero_out_on_short_rows():
+    """If a patch moves the tail offset the row shortens; report zeros
+    rather than whatever integer happens to sit at that index."""
+    from wows_replay_parser.battle_results import PlayerBattleResult
+
+    from renderer.stats_export import ribbon_columns
+
+    truncated = PlayerBattleResult(db_id=1, stats={}, extra={}, raw=[0] * 400)
+    assert ribbon_columns(truncated) == (0, 0, 0, 0)
