@@ -1058,11 +1058,19 @@ def test_accuracy_none_renders_without_error():
 
 
 def test_board_module_has_no_parser_or_discord_import():
-    """The presentation boundary is the point of the split — hold it."""
+    """The presentation boundary is the point of the split — hold it.
+
+    Scoped to import lines on purpose: a raw substring scan would trip on
+    the module docstring, which names the very things it does not import.
+    """
     src = Path("renderer/stats_board.py").read_text()
-    assert "wows_replay_parser" not in src
-    assert "import discord" not in src
-    assert "gamedata" not in src
+    imports = "\n".join(
+        line for line in src.splitlines()
+        if line.startswith(("import ", "from "))
+    )
+    assert "wows_replay_parser" not in imports
+    assert "discord" not in imports
+    assert "gamedata" not in imports
 
 
 def test_theme_changes_output():
@@ -1313,7 +1321,7 @@ Expected: FAIL with `ImportError: cannot import name 'RenderResult' from 'bot.wo
 At module level in `bot/worker.py`, after the `PRESETS` constant:
 
 ```python
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
