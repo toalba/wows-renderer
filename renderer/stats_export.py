@@ -249,12 +249,25 @@ def _player_row(
 def _anonymize(rows: list[PlayerStats]) -> list[PlayerStats]:
     """Replace names with stable positional labels and drop clan tags.
 
+    Also rewrites killed_by to the killer's own anonymised label — it is
+    resolved in _player_row from the real (pre-anonymisation) name, so
+    without this step a dead player's row leaks exactly who killed them.
+    Player names are unique within a single match (WoWS enforces unique
+    account names), so a name -> label map built over this same rows
+    list is a safe join back onto killed_by.
+
     Numbered over the display-sorted list so the same replay always
     produces the same labels.
     """
+    labels = {row.name: f"Player {i + 1}" for i, row in enumerate(rows)}
     return [
-        dataclasses.replace(row, name=f"Player {i + 1}", clan_tag="")
-        for i, row in enumerate(rows)
+        dataclasses.replace(
+            row,
+            name=labels[row.name],
+            clan_tag="",
+            killed_by=labels.get(row.killed_by, ""),
+        )
+        for row in rows
     ]
 
 

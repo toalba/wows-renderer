@@ -189,6 +189,17 @@ def test_anonymize_replaces_names_and_drops_clan_tags(battle_results):
     assert all(p.clan_tag == "" for p in stats.players)
     assert len({p.name for p in stats.players}) == len(stats.players)
 
+    # killed_by is resolved from the real name before anonymisation runs;
+    # it must be rewritten too or a dead player's row leaks their killer's
+    # real name. At least one row must have a non-empty killed_by, or the
+    # assertion below is vacuously true.
+    killed_by_values = [p.killed_by for p in stats.players if p.killed_by]
+    assert killed_by_values, "fixture should contain at least one dead player"
+    assert all(
+        p.killed_by == "" or p.killed_by.startswith("Player ")
+        for p in stats.players
+    )
+
 
 def test_killed_by_resolves_to_a_name_and_weapon(battle_results):
     """killer_db_id joins back to another row in the same payload."""
