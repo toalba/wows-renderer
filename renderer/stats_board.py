@@ -64,6 +64,21 @@ def _mmss(seconds: int) -> str:
     return f"{m}:{s:02d}"
 
 
+def _killed_by_text(p: PlayerStats) -> str:
+    """Who killed them, and with what — per the design spec's own phrasing.
+
+    `killed_by` (a roster name) and `killer_weapon` (a DEATH_REASON label)
+    are independent: a player killed by fire/flood/terrain has no named
+    killer but does have a weapon, and would otherwise render identically
+    to a survivor (both show "—", with only the HP column telling them
+    apart). `killed_by` and `killer_weapon` are only ever non-empty
+    together when the player died, so "—" here implies survival.
+    """
+    if p.killed_by and p.killer_weapon:
+        return f"{p.killed_by} ({p.killer_weapon})"
+    return p.killed_by or p.killer_weapon or "—"
+
+
 COLUMNS: tuple[Column, ...] = (
     Column("name", "Player", lambda p: (f"[{p.clan_tag}] " if p.clan_tag else "") + p.name, "left"),
     Column("ship_name", "Ship", lambda p: (f"{p.ship_class} " if p.ship_class else "") + p.ship_name, "left"),
@@ -94,7 +109,7 @@ COLUMNS: tuple[Column, ...] = (
     Column("hp_remaining", "HP", lambda p: "—" if not p.max_health
            else f"{100 * p.hp_remaining // p.max_health}%"),
     Column("life_time_sec", "Time", lambda p: _mmss(p.life_time_sec)),
-    Column("killed_by", "Killed by", lambda p: p.killed_by or "—", "left"),
+    Column("killed_by", "Killed by", _killed_by_text, "left"),
 )
 
 

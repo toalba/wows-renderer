@@ -161,6 +161,28 @@ def test_long_name_is_capped_and_ellipsised():
     assert render_stats_board(m)[:8] == b"\x89PNG\r\n\x1a\n"
 
 
+def test_killed_by_column_renders_the_weapon():
+    """The design spec asks for "who killed them and with what" — before
+    this, COLUMNS' killed_by formatter ignored killer_weapon entirely, so a
+    player killed by fire/flood/terrain (killed_by="", killer_weapon set)
+    rendered identically to a survivor: both showed "—", distinguishable
+    only via the HP column.
+    """
+    from renderer.stats_board import COLUMNS
+
+    fmt = next(c.fmt for c in COLUMNS if c.key == "killed_by")
+
+    survivor = _player("Survivor", 0, 1_000, killed_by="", killer_weapon="", hp_remaining=1_000)
+    assert fmt(survivor) == "—"
+
+    # Fire/flood/terrain: no named killer, but a weapon label.
+    burned = _player("Burned", 0, 1_000, killed_by="", killer_weapon="FIRE", hp_remaining=0)
+    assert fmt(burned) == "FIRE"
+
+    named_kill = _player("Sunk", 0, 1_000, killed_by="Player09", killer_weapon="HE", hp_remaining=0)
+    assert fmt(named_kill) == "Player09 (HE)"
+
+
 def test_golden_image(tmp_path):
     from renderer.stats_board import render_stats_board
     from tests.golden_image import compare_images, load_reference
