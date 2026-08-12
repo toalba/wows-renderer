@@ -594,7 +594,7 @@ entirely from replays that end before the results packet. See
 | Per-version gamedata awareness | `gamedata_cache.py` | Done |
 | Weather zone overlay | `weather.py` | Done |
 | Dual perspective merged render | `render_dual.py` + `merge.py` in parser | Done |
-| Per-player typed damage (all players) | `stats_export.py` | Done (post-battle `0x22` packet only — see Damage Breakdown → Limitations above; not possible on the live wire stream) |
+| Per-player typed damage (all players) | `stats_export.py` | Partial — total damage per player is surfaced (`stats_export.ship_damage`, the stats board's Dmg column); the post-battle `0x22` packet carries full typed fields (`damage_main_ap/he/cs`, `damage_tpd_*`, `damage_fire`, `damage_flood`, etc. — see Damage Breakdown → Limitations above) but `stats_export.py` does not yet extract them and no typed-damage column exists |
 | Post-battle statistics board (all players) | `stats_export.py` + `stats_board.py` | Done (Statistics button) |
 
 ## Feature Ideas
