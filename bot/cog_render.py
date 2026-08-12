@@ -23,6 +23,8 @@ from discord.ext import commands
 from bot import metrics
 from bot.config import BotConfig
 from bot.worker import render_dual_replay, render_replay
+from renderer.stats_board import render_stats_board
+from renderer.stats_export import MatchStats
 
 log = logging.getLogger(__name__)
 
@@ -145,11 +147,15 @@ class _RenderResultView(discord.ui.View):
         build_urls: list[tuple[str, str, int, str | None]],
         chat_text: str,
         chat_filename: str,
+        stats: MatchStats | None = None,
+        theme: str = "default",
     ) -> None:
         super().__init__(timeout=RESULT_VIEW_TIMEOUT_S)
         self._build_urls = build_urls
         self._chat_text = chat_text
         self._chat_filename = chat_filename
+        self._stats = stats
+        self._theme = theme
         # Set by the cog after the render message lands so on_timeout can
         # grey out the buttons. Without this Discord still shows them as
         # clickable but every click returns "interaction failed".
@@ -158,6 +164,8 @@ class _RenderResultView(discord.ui.View):
             self.remove_item(self.show_builds)
         if not chat_text:
             self.remove_item(self.download_chat)
+        if stats is None:
+            self.remove_item(self.show_statistics)
 
     async def on_timeout(self) -> None:
         if self.message is None:
@@ -196,6 +204,24 @@ class _RenderResultView(discord.ui.View):
         buf = io.BytesIO(self._chat_text.encode("utf-8"))
         file = discord.File(buf, filename=self._chat_filename)
         await interaction.response.send_message(file=file)
+        await interaction.message.edit(view=self)
+
+    @discord.ui.button(label="Statistics", style=discord.ButtonStyle.secondary)
+    async def show_statistics(
+        self, interaction: discord.Interaction, button: discord.ui.Button,
+    ) -> None:
+        button.disabled = True
+        # Defer first: cairo needs a moment and Discord expects a response
+        # within 3s. Rendering goes to a thread because the bot exports
+        # event-loop lag as a metric — a ~100ms synchronous draw here would
+        # show up as a regression on that panel.
+        await interaction.response.defer()
+        assert self._stats is not None
+        png = await asyncio.to_thread(
+            render_stats_board, self._stats, self._theme,
+        )
+        file = discord.File(io.BytesIO(png), filename="match_statistics.png")
+        await interaction.followup.send(file=file)
         await interaction.message.edit(view=self)
 
 # Render behavior flags exposed via the slash commands' `flags` param.
@@ -456,10 +482,14 @@ class RenderCog(commands.Cog):
                     await interaction.edit_original_response(content=new_msg)
 
             # Collect result (raises if worker crashed)
-            (
-                _, replay_duration, timings, game_version, num_players,
-                game_type, build_urls, chat_text,
-            ) = await future
+            result = await future
+            replay_duration = result.duration
+            timings = result.timings
+            game_version = result.game_version
+            num_players = result.num_players
+            game_type = result.game_type
+            build_urls = result.build_urls
+            chat_text = result.chat_text
             elapsed = time.monotonic() - t_start
 
             # Format durations
@@ -503,6 +533,7 @@ class RenderCog(commands.Cog):
                     chat_filename = f"{Path(replay.filename).stem}_chat.txt"
                     result_view = _RenderResultView(
                         build_urls=build_urls, chat_text=chat_text, chat_filename=chat_filename,
+                        stats=result.stats, theme=theme_value,
                     )
                     edit_kwargs: dict = {
                         "content": (
@@ -673,10 +704,11 @@ class RenderCog(commands.Cog):
                 )
 
             try:
-                (
-                    _, replay_duration, timings, game_version, _num_players,
-                    game_type, _build_urls, _chat_text,
-                ) = await asyncio.wait_for(future, timeout=timeout)
+                result = await asyncio.wait_for(future, timeout=timeout)
+                replay_duration = result.duration
+                timings = result.timings
+                game_version = result.game_version
+                game_type = result.game_type
             except TimeoutError:
                 future.cancel()
                 tracked.outcome = metrics.OUTCOME_TIMEOUT
@@ -1141,10 +1173,13 @@ class RenderCog(commands.Cog):
                     last_msg = new_msg
                     await interaction.edit_original_response(content=new_msg)
 
-            (
-                _, replay_duration, timings, game_version, num_players,
-                game_type, _build_urls, chat_text,
-            ) = await future
+            result = await future
+            replay_duration = result.duration
+            timings = result.timings
+            game_version = result.game_version
+            num_players = result.num_players
+            game_type = result.game_type
+            chat_text = result.chat_text
             elapsed = time.monotonic() - t_start
 
             file_size = output_path.stat().st_size
@@ -1179,6 +1214,7 @@ class RenderCog(commands.Cog):
                     chat_filename = f"{Path(replay1.filename).stem}__{Path(replay2.filename).stem}_chat.txt"
                     result_view = _RenderResultView(
                         build_urls=[], chat_text=chat_text, chat_filename=chat_filename,
+                        stats=result.stats, theme=theme_value,
                     )
                     edit_kwargs: dict = {
                         "content": (
