@@ -256,3 +256,27 @@ def test_extract_returns_none_without_a_results_packet():
             return None
 
     assert extract_match_stats(_NoResults(), vgd=None) is None
+
+
+def test_cap_columns_read_the_populated_fields(battle_results):
+    """`capture_points`/`dropped_capture_points` are dead in the schema —
+    zero for every player on both build 15.2 and 15.6. The live values sit
+    on `cp_capture_points`/`cp_dropped_points`. Reading the dead pair left
+    the board's Caps and Rst columns permanently blank, which looked like
+    "nobody capped" rather than "wrong field".
+
+    Asserts against the fixture's own raw stats so it fails if the mapping
+    is pointed back at the dead pair.
+    """
+    stats = _build(battle_results)
+    assert any(p.caps for p in stats.players), "expected some capture points"
+    assert any(p.caps_reset for p in stats.players), "expected some resets"
+
+    expected_caps = sorted(
+        int(p.stat("cp_capture_points") or 0)
+        for p in battle_results.players.values()
+    )
+    assert sorted(p.caps for p in stats.players) == expected_caps
+    assert all(
+        not p.stat("capture_points") for p in battle_results.players.values()
+    ), "fixture no longer demonstrates the dead field — revisit this mapping"

@@ -233,8 +233,11 @@ def _player_row(
         crits=int(_num(stats, "module_crits")),
         major_crits=int(_num(stats, "module_major_crits")),
         module_breaks=int(_num(stats, "module_breaks")),
-        caps=int(_num(stats, "capture_points")),
-        caps_reset=int(_num(stats, "dropped_capture_points")),
+        # `capture_points` / `dropped_capture_points` exist in the schema but
+        # are dead — verified zero for every player across builds 15.2 and
+        # 15.6. The live values are on the `cp_` pair.
+        caps=int(_num(stats, "cp_capture_points")),
+        caps_reset=int(_num(stats, "cp_dropped_points")),
         first_spots=int(
             _num(stats, "first_ships_spotted_by_ship")
             + _num(stats, "first_ships_spotted_by_plane")
