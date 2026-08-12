@@ -233,6 +233,19 @@ def test_ship_name_and_class_resolve_from_ships_db(battle_results):
     assert hit and hit[0].ship_class == "CA"
 
 
+def test_neutral_perspective_has_no_self_row(battle_results):
+    """A merged dual render has no recording player — that's the whole
+    meaning of neutral_perspective — so no row may be highlighted as self.
+    Without the guard, is_self follows self_db_id == results.own_db_id
+    regardless of the flag, and which player that lands on is only an
+    accident of which replay won the A/B fallback in _extract_dual_stats."""
+    normal = _build(battle_results)
+    assert sum(1 for p in normal.players if p.is_self) == 1
+
+    neutral = _build(battle_results, neutral_perspective=True)
+    assert sum(1 for p in neutral.players if p.is_self) == 0
+
+
 def test_extract_returns_none_without_a_results_packet():
     """Incomplete or crashed replays carry no 0x22 packet. The button
     hides itself on None, so this path must not raise."""

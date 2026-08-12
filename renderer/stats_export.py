@@ -190,6 +190,7 @@ def _player_row(
     self_team_id: int,
     self_db_id: int,
     name_by_db_id: dict[int, str],
+    neutral_perspective: bool,
 ) -> PlayerStats:
     stats = player.stats
     ship_id = int(_num(stats, "vehicle_type_id"))
@@ -209,7 +210,12 @@ def _player_row(
         ship_name=str(ship.get("short_name") or ship.get("name") or ship_id),
         ship_class=SPECIES_TAG.get(species, ""),
         team=_display_team(int(_num(stats, "team_id")), self_team_id),
-        is_self=player.db_id == self_db_id,
+        # A merged dual render has no recording player — that's the whole
+        # meaning of neutral_perspective — so no row may be highlighted as
+        # self there. Without this guard, self_db_id defaults to whichever
+        # replay happened to win the A/B fallback in _extract_dual_stats,
+        # making the highlighted row non-deterministic across runs.
+        is_self=(not neutral_perspective) and player.db_id == self_db_id,
         damage=ship_damage(stats),
         received=total_received_damage(stats),
         spotting=int(_num(stats, "scouting_damage")),
@@ -288,7 +294,7 @@ def build_match_stats(
     self_db_id = results.own_db_id
 
     rows = [
-        _player_row(p, ships_db, self_team_id, self_db_id, name_by_db_id)
+        _player_row(p, ships_db, self_team_id, self_db_id, name_by_db_id, neutral_perspective)
         for p in results.players.values()
     ]
     rows.sort(key=lambda r: (r.team, -r.damage, r.name))
