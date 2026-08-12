@@ -93,6 +93,38 @@ def _format_chat_log(replay) -> str:
     return "\n".join(lines)
 
 
+def _extract_dual_stats(replay_a, replay_b, vgd, flags, timings):
+    """Extract match stats from dual replays with fallback.
+
+    Either replay's BattleResults can cover every player in the match.
+    Tries A first, then B if A raises or returns None. Each attempt gets
+    its own try/except so a failure on A doesn't prevent trying B.
+
+    Returns the stats from whichever attempt succeeds; None if both fail.
+    Records the extraction time in timings["stats"].
+    """
+    from time import perf_counter
+
+    t_stats = perf_counter()
+    stats = None
+
+    for label, replay in (("a", replay_a), ("b", replay_b)):
+        try:
+            from renderer.stats_export import extract_match_stats
+
+            candidate = extract_match_stats(
+                replay, vgd, flags, neutral_perspective=True,
+            )
+            if candidate:
+                stats = candidate
+                break
+        except Exception:
+            log.exception("worker: dual stats extraction failed for replay %s", label)
+
+    timings["stats"] = perf_counter() - t_stats
+    return stats
+
+
 def render_replay(
     replay_path: str,
     output_path: str,
@@ -409,20 +441,11 @@ def render_dual_replay(
 
     chat_text = _format_chat_log(merged)
 
-    t_stats = perf_counter()
-    stats = None
-    try:
-        from renderer.stats_export import extract_match_stats
-        # Either replay's BattleResults covers every player in the match;
-        # A is tried first, B only if A's recorder left before the packet.
-        stats = extract_match_stats(
-            replay_a, vgd, flags, neutral_perspective=True,
-        ) or extract_match_stats(
-            replay_b, vgd, flags, neutral_perspective=True,
-        )
-    except Exception:
-        log.exception("worker: dual stats extraction failed")
-    timings["stats"] = perf_counter() - t_stats
+    stats = _extract_dual_stats(replay_a, replay_b, vgd, flags, timings)
+    log.info(
+        "worker: dual stats %s in %.2fs",
+        "extracted" if stats else "unavailable", timings["stats"],
+    )
 
     game_type = merged.meta.get("gameType", "Unknown") if hasattr(merged, "meta") else "Unknown"
     timings["_peak_rss_bytes"] = _peak_rss_bytes()

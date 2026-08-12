@@ -77,3 +77,42 @@ def test_render_result_stats_defaults_to_none():
         f for f in dataclasses.fields(RenderResult) if f.name == "stats"
     )
     assert stats_field.default is None
+
+
+def test_extract_dual_stats_falls_back_on_replay_a_exception():
+    """When replay A's extraction raises, replay B is still attempted.
+
+    This is a regression test for a bug where both attempts sat inside one
+    try/except, so a raise from A prevented B from being tried at all.
+    Only returning None triggered the or operator.
+    """
+    from unittest.mock import Mock, patch
+
+    from bot.worker import _extract_dual_stats
+
+    # Mock stats object
+    mock_stats = Mock(name="MatchStats")
+    timings = {}
+
+    # Patch extract_match_stats with side_effect: first call raises, second returns stats
+    with patch("renderer.stats_export.extract_match_stats") as mock_extract:
+        mock_extract.side_effect = [
+            Exception("replay_a extraction failed"),
+            mock_stats,  # replay_b succeeds
+        ]
+
+        result = _extract_dual_stats(
+            replay_a="mock_a",
+            replay_b="mock_b",
+            vgd="mock_vgd",
+            flags=frozenset(),
+            timings=timings,
+        )
+
+    # Verify result came from replay B
+    assert result is mock_stats
+    # Verify both calls were made (the second even though the first raised)
+    assert mock_extract.call_count == 2
+    # Verify timings were recorded
+    assert "stats" in timings
+    assert isinstance(timings["stats"], float)
