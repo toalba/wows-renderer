@@ -17,8 +17,15 @@ All notable changes to `wows-minimap-renderer` are documented here.
 - **Worker peak RSS** reported through the `timings` dict (`_peak_rss_bytes`), leaving the worker's 8-tuple return contract unchanged. Note `ru_maxrss` is a per-process high-water mark, so with worker recycling disabled it spans a worker's whole lifetime, not one render.
 - **`_loop_lag_bg`** — 1s event-loop responsiveness sampling, complementing the 30s liveness heartbeat which only catches a fully wedged loop.
 
+#### Statistics Board
+- **Statistics button** on render results — posts a 29-column post-battle
+  stats board covering every player in the match, rendered from the `0x22`
+  BattleResults packet. Hidden when a replay ends before that packet
+  arrives. Respects the `anonymize` flag and the theme dropdown.
+
 ### Changed
 - **`/render_dual` is now available on every server** — removed the `AUTHORIZED_GUILD_IDS` gate. A dedicated 10-min per-user cooldown now applies on all guilds (the previously shared `_batch_cooldown` only rate-limited authorized guilds, which would have left dual renders uncapped everywhere else). `/render_batch` remains gated.
+- Render workers return a `RenderResult` dataclass instead of an 8-tuple.
 
 ## [0.3.0] — 2026-05-21
 

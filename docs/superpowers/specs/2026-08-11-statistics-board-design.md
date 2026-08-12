@@ -130,7 +130,6 @@ class MatchStats:
     duration_sec: int
     winner_team: int                     # display team, -1 = draw
     neutral_perspective: bool            # True for dual renders (no recorder)
-    points_divisor: int                  # 1 or 100 — see "Open item" below
 
 
 def extract_match_stats(replay, vgd, flags) -> MatchStats | None: ...
@@ -207,7 +206,7 @@ Cairo render on the event loop would be a visible regression.
 
 ## Columns
 
-30 columns, one row per player, grouped left to right. `R` marks a value read
+29 columns, one row per player, grouped left to right. `R` marks a value read
 from the ribbon tail rather than a named field.
 
 | Group | Column | Source |
@@ -232,7 +231,6 @@ from the ribbon tail rather than a named field.
 | | Brk | `module_breaks` |
 | Objectives | Caps | `capture_points` |
 | | Rst | `dropped_capture_points` |
-| | Pts | `Σ victory_points_*` (see Open item) |
 | | 1st | `first_ships_spotted_by_ship + first_ships_spotted_by_plane` |
 | | TpdSp | `tpds_spotted` |
 | | Planes | `planes_killed_by_ship` |
@@ -255,18 +253,22 @@ from the ribbon tail rather than a named field.
   ids, not a scalar. It does not fit a numeric column and would need its own row
   treatment.
 
-## Open item — `Pts` units
+## Resolved — `Pts` dropped from v1
 
-`Σ victory_points_*` is unverified. The sample shows
-`victory_points_kill_cruiser = 10000` and `victory_points_own_ship_kill = -2500`
-while a domination match scores to roughly 1000, which suggests internal units
-scaled by 100.
+`Σ victory_points_*` is **not** a scaled team score, so the planned `Pts`
+column was cut before implementation.
 
-**Resolution during implementation:** reconcile the per-team sum against the known
-final score from `BattleLogic.teams`. If the ratio is a clean 100, `extract_match_stats`
-sets `points_divisor = 100` and the board labels the column `Pts`. If it does not
-reconcile, `points_divisor` stays `1` and the board labels the column `Pts (raw)`
-rather than showing a score that looks wrong. Do not guess the divisor.
+Evidence from the 14-player sample: per-team sums are 261,720 and 34,660 in
+a match that scores to 1000, which is not a clean multiple; the figure does
+not reconcile after removing the end-of-match `victory_points_victory_*`
+bonuses either; `victory_points_cp_hold = 34,800` appears **identically on
+two different players**; and `23,400` appears on one player from each
+team.
+
+These are reward/bonus points partly duplicated across teammates, not
+per-player score contribution. A column whose per-row meaning cannot be
+stated does not ship. `Caps` and `Rst` already carry unambiguous objective
+signal. Revisit if the semantics are ever pinned down.
 
 ## Open item — ribbon slot base index
 

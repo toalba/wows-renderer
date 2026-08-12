@@ -42,6 +42,9 @@ wows-minimap-renderer/
 │   │   ├── killfeed.py        # Right panel: kill feed + chat messages, bottom-up
 │   │   ├── right_panel.py     # Right panel composite: player_header + damage_stats + ribbons + achievements + killfeed
 │   │   └── hud.py             # Score bar, timer, TTW pills, 1-kill-swing indicator, match result
+│   ├── stats_export.py        # BattleResults → PlayerStats/MatchStats (no cairo)
+│   ├── stats_board.py         # MatchStats → PNG stats board (no parser/gamedata)
+│   ├── death_reasons.py       # Shared DEATH_REASON id → (label, icon) table
 │   ├── video.py               # PyAVPipe + FrameWriter (async background thread offloads stream.encode())
 │   └── assets.py              # Asset loading (minimaps, ship icons, consumable icons, ribbons, projectiles, ships.json, map_sizes, ship_consumables)
 ├── scripts/
@@ -548,6 +551,14 @@ These belong to interactive minimaps and add no value to a fixed-resolution time
 
 Per-player typed damage breakdown for all players is **not possible** — the game protocol only sends `receiveDamageStat` (which includes ammo_id) for the recording player. Other players only get `receiveDamagesOnShip` with total damage, no type info. This is a game protocol constraint, not a parser limitation.
 
+**Post-battle exception.** The above describes the *live wire stream*.
+`BattleResults` (packet `0x22`, via `replay.battle_results()`) does carry a
+full typed damage breakdown for **every** player — `damage_main_ap/he/cs`,
+`damage_tpd_*`, `damage_fire`, `damage_flood`, `damage_ram` and ~40 more
+weapon categories. It is only unavailable *during* the match, and absent
+entirely from replays that end before the results packet. See
+`renderer/stats_export.py`.
+
 ## WG Bounty Requirements Mapping
 
 ### Core
@@ -583,7 +594,8 @@ Per-player typed damage breakdown for all players is **not possible** — the ga
 | Per-version gamedata awareness | `gamedata_cache.py` | Done |
 | Weather zone overlay | `weather.py` | Done |
 | Dual perspective merged render | `render_dual.py` + `merge.py` in parser | Done |
-| Per-player typed damage (all players) | — | Not possible (game protocol limitation) |
+| Per-player typed damage (all players) | `stats_export.py` | Done (post-battle `0x22` packet only — see Damage Breakdown → Limitations above; not possible on the live wire stream) |
+| Post-battle statistics board (all players) | `stats_export.py` + `stats_board.py` | Done (Statistics button) |
 
 ## Feature Ideas
 
@@ -635,6 +647,25 @@ Unscheduled ideas — kept as a reference for future work.
 5. Send mp4 with game type, match duration, render time, file size
 6. Log per-phase timing breakdown (parse/render/encode/upload)
 7. Cleanup temp dir
+
+### Render Result Buttons
+`_RenderResultView` (attached to every render reply) exposes up to three
+buttons, each disabled on first click and removed at `__init__` when its
+underlying data isn't available:
+- **Show Builds** — removed when `build_urls` is empty. Posts ShipBuilder
+  links per player as embeds (falls back to a `.txt` attachment if the
+  embeds overflow Discord's limits).
+- **Download Chat** — removed when the replay carried no chat. Posts the
+  formatted chat transcript as a text attachment.
+- **Statistics** — removed when `stats` is `None` (no `0x22` BattleResults
+  packet on the replay, e.g. the recorder quit early). Renders the
+  post-battle stats board PNG via `asyncio.to_thread(render_stats_board, ...)`
+  and posts it as a follow-up, so the ~100ms synchronous Cairo draw never
+  blocks the event loop. Respects the `anonymize` flag and the render's
+  `theme`.
+
+All three grey out after `RESULT_VIEW_TIMEOUT_S` (10 min, `on_timeout`) or on
+bot restart, since view state lives in process memory only.
 
 ### `/render_batch` — bulk render (authorized guilds only)
 Up to 10 replays in one invocation, gated by `AUTHORIZED_GUILD_IDS`.
