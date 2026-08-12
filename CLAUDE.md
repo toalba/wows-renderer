@@ -617,6 +617,11 @@ Unscheduled ideas — kept as a reference for future work.
 
 ### Architecture
 - **ProcessPoolExecutor** (not threads) — cairo rendering is CPU-bound; separate processes bypass the GIL
+- **`forkserver` start method** (`RenderCog._make_pool`) — the bot process also imports `renderer.stats_board`
+  (cairo) for the Statistics button and draws with it on an `asyncio.to_thread` worker thread. Plain `fork()`
+  would only duplicate that one thread; a fork landing while it holds one of cairo's global font-cache mutexes
+  leaves the mutex locked forever in the child, wedging that worker until `RENDER_TIMEOUT` with no log trace.
+  `forkserver` forks from a clean single-threaded helper instead, so it can never observe the lock held.
 - **`multiprocessing.Manager().Queue()`** — cross-process progress reporting, polled every 2s to update Discord message
 - **Temp directory per render** — replay + mp4 in isolated tmpdir, cleaned up in `finally`
 - **Deadline-based timeout** — cancels render if it exceeds `RENDER_TIMEOUT` (default 120s)
@@ -750,9 +755,9 @@ provisioned Grafana dashboard — all three in `docker-compose.yml`.
 which normally forces `prometheus_client`'s file-backed multiprocess registry.
 Not needed here: workers return their `timings` dict to the parent, so *all*
 instrumentation lives in the parent and uses the plain default registry.
-`start_http_server` runs a daemon thread, and `fork` does not carry threads
-into the child, so workers never inherit the listening socket (`spawn` — what
-`RENDER_MAX_TASKS_PER_CHILD` silently switches to — likewise).
+`start_http_server` runs a daemon thread, and neither `fork` nor `forkserver`
+(the pool's actual start method — see Architecture above) carries threads
+into the child, so workers never inherit the listening socket.
 
 `renderer/` deliberately has **no** prometheus dependency. It keeps reporting
 through its `timings` dict; the translation to metrics happens in `bot/`.
@@ -811,11 +816,13 @@ floor is 1 GB so the scheduler won't starve the bot under load. Adjust
 downward only if co-located with more containers on a smaller VPS.
 
 `RENDER_MAX_TASKS_PER_CHILD` defaults to unset (no worker recycling). Setting
-it to any positive int forces Python's `multiprocessing` to use the **spawn**
-start method per the `ProcessPoolExecutor` docs — that re-imports every module
-and reloads the 15 MB GameParams pickle per worker lifecycle, adding ~5-10s of
-overhead per spawn on ARM. Only enable it if you've observed accumulated
-per-worker memory growth that pool recovery can't handle.
+it to any positive int recycles each worker after that many renders. The pool
+always runs on the `forkserver` start method (see Architecture above), so
+recycling forks a fresh worker from the clean helper process rather than
+re-importing every module and reloading the 15 MB GameParams pickle the way
+Python's **spawn** start method would — the ~5-10s-per-worker cost that
+implied on ARM does not apply here. Only enable it if you've observed
+accumulated per-worker memory growth that pool recovery can't handle.
 
 ### Log rotation
 JSON-file driver with rolling window: **10 MB × 5 files = ~50 MB ceiling**.

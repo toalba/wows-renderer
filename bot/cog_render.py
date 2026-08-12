@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import functools
 import io
 import logging
+import multiprocessing
 import queue
 import shutil
 import tempfile
@@ -178,6 +180,25 @@ class _RenderResultView(discord.ui.View):
         except discord.HTTPException:
             pass
 
+    async def on_error(
+        self, interaction: discord.Interaction, error: Exception,
+        item: discord.ui.Item,
+    ) -> None:
+        """Surface button failures to the user.
+
+        `show_statistics` defers before rendering, and a deferred component
+        interaction that never gets a follow-up shows the user *nothing* —
+        not even Discord's "interaction failed". Without this, a cairo error
+        is indistinguishable from a dead bot.
+        """
+        log.exception("Result view button %r failed", getattr(item, "label", item))
+        send = (
+            interaction.followup.send if interaction.response.is_done()
+            else interaction.response.send_message
+        )
+        with contextlib.suppress(discord.HTTPException):
+            await send("Sorry — that button failed. Please try again.", ephemeral=True)
+
     @discord.ui.button(label="Show Builds", style=discord.ButtonStyle.secondary)
     async def show_builds(
         self, interaction: discord.Interaction, button: discord.ui.Button,
@@ -333,9 +354,23 @@ class RenderCog(commands.Cog):
         self._manager = Manager()
 
     def _make_pool(self) -> ProcessPoolExecutor:
+        # forkserver, not the default "fork": this process imports
+        # renderer.stats_board (cairo) and draws with it on an
+        # asyncio.to_thread worker thread. fork() only duplicates the
+        # calling thread, so if a fork lands while that thread holds one of
+        # cairo's global font-cache mutexes, the lock's owner never gets
+        # copied into the child — the mutex is locked forever and that
+        # worker wedges until RENDER_TIMEOUT with no log trace. forkserver
+        # forks from a clean, single-threaded helper process instead, so it
+        # can never observe that lock held, and — unlike "spawn" — it does
+        # not re-import every module or reload the 15 MB GameParams pickle,
+        # so it doesn't reintroduce the ~5-10s-per-worker cost documented on
+        # BotConfig.render_max_tasks_per_child. Do not "simplify" this back
+        # to the default fork context.
         return ProcessPoolExecutor(
             max_workers=self.config.max_workers,
             max_tasks_per_child=self.config.render_max_tasks_per_child,
+            mp_context=multiprocessing.get_context("forkserver"),
         )
 
     async def _replace_broken_pool(self, broken: ProcessPoolExecutor) -> ProcessPoolExecutor:
