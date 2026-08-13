@@ -14,6 +14,7 @@ import zipfile
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import discord
 from discord import app_commands
@@ -249,23 +250,41 @@ THEME_CHOICES = [
 ]
 
 
+def _render_cog(interaction: discord.Interaction) -> Any:
+    """The loaded RenderCog, or None.
+
+    Goes through getattr because `Interaction.client` is typed as `Client`,
+    which has no `get_cog` — the running client is always a `commands.Bot`,
+    but only the cooldown factories (which receive an Interaction, not the
+    cog) have to reach it this way.
+    """
+    get_cog = getattr(interaction.client, "get_cog", None)
+    return get_cog("RenderCog") if get_cog is not None else None
+
+
 def _batch_cooldown(interaction: discord.Interaction) -> app_commands.Cooldown | None:
     """Apply the 10-min cooldown only to authorized guilds; unauthorized users
     are rejected inside the command body, so their cooldown must not be burned.
     Returns None = no cooldown tracking for this invocation."""
-    cog = interaction.client.get_cog("RenderCog")
+    cog = _render_cog(interaction)
     if cog is None:
         return None
-    if interaction.guild_id in cog.config.authorized_guild_ids:  # type: ignore[attr-defined]
+    if interaction.guild_id in cog.config.authorized_guild_ids:
         return app_commands.Cooldown(1, BATCH_COOLDOWN_SECONDS)
     return None
 
 
 def _dual_cooldown(interaction: discord.Interaction) -> app_commands.Cooldown | None:
-    """10-min cooldown for /render_dual, applied on every guild. Unlike
+    """Per-user cooldown for /render_dual, applied on every guild. Unlike
     /render_batch, /render_dual is no longer gated to authorized guilds, so the
-    cooldown must always apply to bound the cost of this heavy operation."""
-    return app_commands.Cooldown(1, BATCH_COOLDOWN_SECONDS)
+    cooldown must always apply to bound the cost of this heavy operation.
+
+    Length comes from DUAL_COOLDOWN_SECONDS so an operator can loosen it
+    without a code change; falls back to the conservative default when the cog
+    isn't reachable (which is also what an unloaded cog would mean)."""
+    cog = _render_cog(interaction)
+    seconds = cog.config.dual_cooldown_seconds if cog is not None else BATCH_COOLDOWN_SECONDS
+    return app_commands.Cooldown(1, float(seconds))
 
 
 def _extract_replays_from_zip(

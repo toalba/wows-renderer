@@ -4,6 +4,10 @@ All notable changes to `wows-minimap-renderer` are documented here.
 
 ## [Unreleased]
 
+### Changed
+- **`/render_dual`'s cooldown is now configurable** via `DUAL_COOLDOWN_SECONDS` (default 600, unchanged). It was hard-coded to `BATCH_COOLDOWN_SECONDS`, so loosening it where the pool has headroom meant a code change. `_dual_cooldown` falls back to the 600s default when the cog can't be reached, so a lookup failure can never mean *no* cooldown on the heaviest command. Production runs 60.
+- **`_render_cog()`** replaces the duplicated `interaction.client.get_cog("RenderCog")` in both cooldown factories — `Interaction.client` is typed as `Client`, which has no `get_cog`, so the lookup now goes through one documented accessor instead of two untyped ones.
+
 ### Added
 
 #### HTTP Render API + Cloudflare Tunnel

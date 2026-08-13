@@ -30,6 +30,9 @@ class BotConfig:
     render_max_tasks_per_child: int | None = None
     render_timeout: int = 120
     cooldown_seconds: int = 60
+    # Per-user cooldown on /render_dual. Defaults high because a dual render
+    # parses two replays and merges them; lower it where the pool has headroom.
+    dual_cooldown_seconds: int = 600
     render_speed: float = 20.0
     render_fps: int = 20
     minimap_size: int = 1080
@@ -75,6 +78,9 @@ class BotConfig:
                 "it is the only credential in front of a publicly tunnelled render "
                 "endpoint. Generate one with `openssl rand -hex 32`.",
             )
+        dual_cooldown = int(os.environ.get("DUAL_COOLDOWN_SECONDS", "600"))
+        if dual_cooldown < 1:
+            raise RuntimeError("DUAL_COOLDOWN_SECONDS must be >= 1")
         api_max_pending = int(os.environ.get("API_MAX_PENDING", "4"))
         if api_max_pending < 1:
             raise RuntimeError("API_MAX_PENDING must be >= 1")
@@ -91,6 +97,7 @@ class BotConfig:
             render_max_tasks_per_child=max_tasks_per_child,
             render_timeout=int(os.environ.get("RENDER_TIMEOUT", "120")),
             cooldown_seconds=int(os.environ.get("COOLDOWN_SECONDS", "60")),
+            dual_cooldown_seconds=dual_cooldown,
             authorized_guild_ids=authorized_guild_ids,
             metrics_enabled=metrics_enabled,
             metrics_port=int(os.environ.get("METRICS_PORT", "9108")),

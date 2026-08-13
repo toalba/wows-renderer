@@ -395,6 +395,7 @@ All config is via environment variables (or `.env` file):
 | `RENDER_MAX_TASKS_PER_CHILD` | *(unset)* | Recycle each worker after N renders (unset = no recycling) |
 | `RENDER_TIMEOUT` | `120` | Max seconds per render |
 | `COOLDOWN_SECONDS` | `60` | Per-user rate limit |
+| `DUAL_COOLDOWN_SECONDS` | `600` | Per-user cooldown on `/render_dual` (it parses two replays and merges them) |
 | `MAX_UPLOAD_MB` | `50` | Max replay file size |
 | `AUTHORIZED_GUILD_IDS` | *(empty)* | Comma-separated guild IDs allowed to use `/render_batch` |
 | `ENABLE_BUILD_URLS` | `false` | Re-enable the ShipBuilder build-URL embed |

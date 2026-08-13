@@ -646,7 +646,8 @@ Unscheduled ideas — kept as a reference for future work.
 | `MAX_WORKERS` | `2` | Concurrent render processes |
 | `RENDER_MAX_TASKS_PER_CHILD` | `4` | Recycle each worker after N renders (bounds cairo/ffmpeg memory growth) |
 | `RENDER_TIMEOUT` | `120` | Seconds before render is cancelled |
-| `COOLDOWN_SECONDS` | `60` | Per-user rate limit |
+| `COOLDOWN_SECONDS` | `60` | Per-user rate limit (note: `/render`'s cooldown is hard-coded to 60s; this field is currently unused) |
+| `DUAL_COOLDOWN_SECONDS` | `600` | Per-user cooldown on `/render_dual`. Read by `_dual_cooldown`; falls back to `BATCH_COOLDOWN_SECONDS` if the cog is unreachable, so a lookup failure never means *no* cooldown on the heaviest command |
 | `MAX_UPLOAD_MB` | `50` | Max replay file size |
 | `AUTHORIZED_GUILD_IDS` | *(empty)* | Comma-separated guild IDs allowed to use `/render_batch`; empty disables the command globally |
 | `METRICS_ENABLED` | `true` | Serve the Prometheus `/metrics` endpoint |
