@@ -43,7 +43,7 @@ wows-minimap-renderer/
 │   │   ├── right_panel.py     # Right panel composite: player_header + damage_stats + ribbons + achievements + killfeed
 │   │   └── hud.py             # Score bar, timer, TTW pills, 1-kill-swing indicator, match result
 │   ├── stats_export.py        # BattleResults → PlayerStats/MatchStats (no cairo)
-│   ├── stats_board.py         # MatchStats → PNG stats board (no parser/gamedata)
+│   ├── stats_board.py         # MatchStats → PNG stats board (compact + detailed layouts; no parser/gamedata)
 │   ├── death_reasons.py       # Shared DEATH_REASON id → (label, icon) table
 │   ├── video.py               # PyAVPipe + FrameWriter (async background thread offloads stream.encode())
 │   └── assets.py              # Asset loading (minimaps, ship icons, consumable icons, ribbons, projectiles, ships.json, map_sizes, ship_consumables)
@@ -668,6 +668,22 @@ underlying data isn't available:
   and posts it as a follow-up, so the ~100ms synchronous Cairo draw never
   blocks the event loop. Respects the `anonymize` flag and the render's
   `theme`.
+
+  Two layouts, selected by `render_stats_board(..., layout=...)`:
+  **compact** (default) is 11 columns plus a per-player ribbon strip drawn
+  from the game's own ribbon art; **detailed** is all 29 numeric columns
+  and no ribbons. Compact silently falls back to detailed when the ribbon
+  tail can't be trusted for that replay's build (pre-15.3 rows are 503
+  elements, and the parser's `ribbon_counts()` has no bounds guard — it
+  would return misaligned integers), when no icons resolved, or when an
+  icon file won't load. Detailed needs no gamedata, which is what makes it
+  a safe universal fallback.
+
+  Ribbon icon paths are resolved **worker-side** by
+  `stats_export.resolve_ribbon_icons()` and shipped on `MatchStats` as
+  plain filesystem paths. The id→filename mapping needs the parser's
+  `RIBBON_WIRE_IDS` and the files live under the versioned gamedata tree —
+  both dependencies `stats_board.py` must not have.
 
 All three grey out after `RESULT_VIEW_TIMEOUT_S` (10 min, `on_timeout`) or on
 bot restart, since view state lives in process memory only.
