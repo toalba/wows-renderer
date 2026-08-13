@@ -42,6 +42,9 @@ wows-minimap-renderer/
 │   │   ├── killfeed.py        # Right panel: kill feed + chat messages, bottom-up
 │   │   ├── right_panel.py     # Right panel composite: player_header + damage_stats + ribbons + achievements + killfeed
 │   │   └── hud.py             # Score bar, timer, TTW pills, 1-kill-swing indicator, match result
+│   ├── stats_export.py        # BattleResults → PlayerStats/MatchStats (no cairo)
+│   ├── stats_board.py         # MatchStats → PNG stats board (compact + detailed layouts; no parser/gamedata)
+│   ├── death_reasons.py       # Shared DEATH_REASON id → (label, icon) table
 │   ├── video.py               # PyAVPipe + FrameWriter (async background thread offloads stream.encode())
 │   └── assets.py              # Asset loading (minimaps, ship icons, consumable icons, ribbons, projectiles, ships.json, map_sizes, ship_consumables)
 ├── scripts/
@@ -548,6 +551,14 @@ These belong to interactive minimaps and add no value to a fixed-resolution time
 
 Per-player typed damage breakdown for all players is **not possible** — the game protocol only sends `receiveDamageStat` (which includes ammo_id) for the recording player. Other players only get `receiveDamagesOnShip` with total damage, no type info. This is a game protocol constraint, not a parser limitation.
 
+**Post-battle exception.** The above describes the *live wire stream*.
+`BattleResults` (packet `0x22`, via `replay.battle_results()`) does carry a
+full typed damage breakdown for **every** player — `damage_main_ap/he/cs`,
+`damage_tpd_*`, `damage_fire`, `damage_flood`, `damage_ram` and ~40 more
+weapon categories. It is only unavailable *during* the match, and absent
+entirely from replays that end before the results packet. See
+`renderer/stats_export.py`.
+
 ## WG Bounty Requirements Mapping
 
 ### Core
@@ -583,7 +594,8 @@ Per-player typed damage breakdown for all players is **not possible** — the ga
 | Per-version gamedata awareness | `gamedata_cache.py` | Done |
 | Weather zone overlay | `weather.py` | Done |
 | Dual perspective merged render | `render_dual.py` + `merge.py` in parser | Done |
-| Per-player typed damage (all players) | — | Not possible (game protocol limitation) |
+| Per-player typed damage (all players) | `stats_export.py` | Partial — total damage per player is surfaced (`stats_export.ship_damage`, the stats board's Dmg column); the post-battle `0x22` packet carries full typed fields (`damage_main_ap/he/cs`, `damage_tpd_*`, `damage_fire`, `damage_flood`, etc. — see Damage Breakdown → Limitations above) but `stats_export.py` does not yet extract them and no typed-damage column exists |
+| Post-battle statistics board (all players) | `stats_export.py` + `stats_board.py` | Done (Statistics button) |
 
 ## Feature Ideas
 
@@ -605,6 +617,11 @@ Unscheduled ideas — kept as a reference for future work.
 
 ### Architecture
 - **ProcessPoolExecutor** (not threads) — cairo rendering is CPU-bound; separate processes bypass the GIL
+- **`forkserver` start method** (`RenderCog._make_pool`) — the bot process also imports `renderer.stats_board`
+  (cairo) for the Statistics button and draws with it on an `asyncio.to_thread` worker thread. Plain `fork()`
+  would only duplicate that one thread; a fork landing while it holds one of cairo's global font-cache mutexes
+  leaves the mutex locked forever in the child, wedging that worker until `RENDER_TIMEOUT` with no log trace.
+  `forkserver` forks from a clean single-threaded helper instead, so it can never observe the lock held.
 - **`multiprocessing.Manager().Queue()`** — cross-process progress reporting, polled every 2s to update Discord message
 - **Temp directory per render** — replay + mp4 in isolated tmpdir, cleaned up in `finally`
 - **Deadline-based timeout** — cancels render if it exceeds `RENDER_TIMEOUT` (default 120s)
@@ -635,6 +652,47 @@ Unscheduled ideas — kept as a reference for future work.
 5. Send mp4 with game type, match duration, render time, file size
 6. Log per-phase timing breakdown (parse/render/encode/upload)
 7. Cleanup temp dir
+
+### Render Result Buttons
+`_RenderResultView` (attached to every render reply) exposes up to three
+buttons, each disabled on first click and removed at `__init__` when its
+underlying data isn't available:
+- **Show Builds** — removed when `build_urls` is empty. Posts ShipBuilder
+  links per player as embeds (falls back to a `.txt` attachment if the
+  embeds overflow Discord's limits).
+- **Download Chat** — removed when the replay carried no chat. Posts the
+  formatted chat transcript as a text attachment.
+- **Statistics** — removed when `stats` is `None` (no `0x22` BattleResults
+  packet on the replay, e.g. the recorder quit early). Renders the
+  post-battle stats board PNG via `asyncio.to_thread(render_stats_board, ...)`
+  and posts it as a follow-up, so the ~100ms synchronous Cairo draw never
+  blocks the event loop. Respects the `anonymize` flag and the render's
+  `theme`.
+
+  Two layouts, selected by `render_stats_board(..., layout=...)`:
+  **compact** (default) is 11 columns plus a per-player ribbon strip drawn
+  from the game's own ribbon art; **detailed** is all 29 numeric columns
+  and no ribbons. Compact falls back to detailed when the ribbon tail can't
+  be trusted for that replay's build (pre-15.3 rows are 503 elements, and
+  the parser's `ribbon_counts()` has no bounds guard — it would return
+  misaligned integers), or when no icon loaded at all. A single corrupt
+  icon among good ones is skipped from the strip rather than triggering a
+  fallback. Detailed needs no gamedata, which is what makes it a safe
+  universal fallback.
+
+  Same-match width: 1656px compact vs 1967px detailed at 14 players, 2003
+  vs 2077 at 24. The saving shrinks as players are added, because the strip
+  grows while the dropped columns do not — compact is chosen for density
+  and legibility, not primarily for width.
+
+  Ribbon icon paths are resolved **worker-side** by
+  `stats_export.resolve_ribbon_icons()` and shipped on `MatchStats` as
+  plain filesystem paths. The id→filename mapping needs the parser's
+  `RIBBON_WIRE_IDS` and the files live under the versioned gamedata tree —
+  both dependencies `stats_board.py` must not have.
+
+All three grey out after `RESULT_VIEW_TIMEOUT_S` (10 min, `on_timeout`) or on
+bot restart, since view state lives in process memory only.
 
 ### `/render_batch` — bulk render (authorized guilds only)
 Up to 10 replays in one invocation, gated by `AUTHORIZED_GUILD_IDS`.
@@ -719,9 +777,9 @@ provisioned Grafana dashboard — all three in `docker-compose.yml`.
 which normally forces `prometheus_client`'s file-backed multiprocess registry.
 Not needed here: workers return their `timings` dict to the parent, so *all*
 instrumentation lives in the parent and uses the plain default registry.
-`start_http_server` runs a daemon thread, and `fork` does not carry threads
-into the child, so workers never inherit the listening socket (`spawn` — what
-`RENDER_MAX_TASKS_PER_CHILD` silently switches to — likewise).
+`start_http_server` runs a daemon thread, and neither `fork` nor `forkserver`
+(the pool's actual start method — see Architecture above) carries threads
+into the child, so workers never inherit the listening socket.
 
 `renderer/` deliberately has **no** prometheus dependency. It keeps reporting
 through its `timings` dict; the translation to metrics happens in `bot/`.
@@ -780,11 +838,13 @@ floor is 1 GB so the scheduler won't starve the bot under load. Adjust
 downward only if co-located with more containers on a smaller VPS.
 
 `RENDER_MAX_TASKS_PER_CHILD` defaults to unset (no worker recycling). Setting
-it to any positive int forces Python's `multiprocessing` to use the **spawn**
-start method per the `ProcessPoolExecutor` docs — that re-imports every module
-and reloads the 15 MB GameParams pickle per worker lifecycle, adding ~5-10s of
-overhead per spawn on ARM. Only enable it if you've observed accumulated
-per-worker memory growth that pool recovery can't handle.
+it to any positive int recycles each worker after that many renders. The pool
+always runs on the `forkserver` start method (see Architecture above), so
+recycling forks a fresh worker from the clean helper process rather than
+re-importing every module and reloading the 15 MB GameParams pickle the way
+Python's **spawn** start method would — the ~5-10s-per-worker cost that
+implied on ARM does not apply here. Only enable it if you've observed
+accumulated per-worker memory growth that pool recovery can't handle.
 
 ### Log rotation
 JSON-file driver with rolling window: **10 MB × 5 files = ~50 MB ceiling**.

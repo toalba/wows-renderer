@@ -16,10 +16,13 @@ class BotConfig:
     cache_root: Path | None = None  # None = ~/.cache/wows-gamedata/
     max_upload_mb: int = 50
     max_workers: int = 2
-    # None = no recycling, pool keeps fork start method (fast cold-start).
-    # Any positive int silently forces the "spawn" start method per Python
-    # docs, which re-imports all modules + reloads the 15 MB GameParams
-    # pickle every worker lifecycle — ~5-10s of overhead per spawn on ARM.
+    # None = no recycling. The pool always uses the "forkserver" start
+    # method (see RenderCog._make_pool — a fork-safety fix for cairo, not
+    # related to this setting), which forks from a clean single-threaded
+    # helper rather than re-importing modules, so unlike the historical
+    # "spawn" fallback, enabling recycling here does not reload the 15 MB
+    # GameParams pickle or add the ~5-10s-per-worker cost that used to come
+    # with it on ARM.
     render_max_tasks_per_child: int | None = None
     render_timeout: int = 120
     cooldown_seconds: int = 60

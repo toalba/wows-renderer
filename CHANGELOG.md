@@ -17,8 +17,36 @@ All notable changes to `wows-minimap-renderer` are documented here.
 - **Worker peak RSS** reported through the `timings` dict (`_peak_rss_bytes`), leaving the worker's 8-tuple return contract unchanged. Note `ru_maxrss` is a per-process high-water mark, so with worker recycling disabled it spans a worker's whole lifetime, not one render.
 - **`_loop_lag_bg`** — 1s event-loop responsiveness sampling, complementing the 30s liveness heartbeat which only catches a fully wedged loop.
 
+#### Statistics Board
+- **Statistics button** on render results — posts a post-battle stats board
+  covering every player in the match, rendered from the `0x22` BattleResults
+  packet. Hidden when a replay ends before that packet arrives. Respects the
+  `anonymize` flag and the theme dropdown.
+- **Two board layouts.** *Compact* (default) is 11 columns plus a per-player
+  ribbon strip drawn with the game's own ribbon art. On the same match it is
+  1656px against 1967px detailed at 14 players (311px saved), and 2003px
+  against 2077px at 24 (74px). The width saving shrinks with player count —
+  the point is density and legibility, not width. *Detailed* keeps all 29
+  numeric columns and no ribbons; it needs no gamedata, so it is also the
+  automatic fallback whenever ribbons can't be drawn: the replay's build
+  predates 15.3 (results rows are 503 elements, and the parser's
+  `ribbon_counts()` has no bounds guard of its own), or no icon loaded at
+  all. A single corrupt icon among good ones is skipped, not a fallback.
+- Ribbon icon paths are resolved worker-side and shipped on `MatchStats` as
+  plain filesystem paths, so `stats_board.py` keeps its no-parser,
+  no-gamedata import boundary while still drawing real ribbon art.
+
 ### Changed
 - **`/render_dual` is now available on every server** — removed the `AUTHORIZED_GUILD_IDS` gate. A dedicated 10-min per-user cooldown now applies on all guilds (the previously shared `_batch_cooldown` only rate-limited authorized guilds, which would have left dual renders uncapped everywhere else). `/render_batch` remains gated.
+- Render workers return a `RenderResult` dataclass instead of an 8-tuple.
+- Statistics board `Killed by` shows the killer's name without the weapon
+  label, which had made it the widest column on the sheet. The consequence
+  is that a fire/flood/terrain death renders `—` like a survivor, separated
+  only by the HP column.
+- Statistics board `Caps`/`Rst` read `cp_capture_points` /
+  `cp_dropped_points`. The previously-used `capture_points` /
+  `dropped_capture_points` are dead in the schema — zero for every player on
+  both build 15.2 and 15.6 — so those two columns were always blank.
 
 ## [0.3.0] — 2026-05-21
 

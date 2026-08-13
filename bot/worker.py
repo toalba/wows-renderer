@@ -1,13 +1,21 @@
 """Render worker function for ProcessPoolExecutor.
 
-All imports are inside the function body so it stays picklable.
+The heavy renderer imports (cairo, av, wows_replay_parser, ...) are kept
+inside the function bodies so importing this module stays cheap. That does
+not apply to the dataclass below: it is the picklable return value crossing
+the ProcessPoolExecutor boundary, so it must live at module level.
 """
 from __future__ import annotations
 
 import logging
 import os
 import sys
+from dataclasses import dataclass
 from multiprocessing import Queue
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from renderer.stats_export import MatchStats
 
 log = logging.getLogger(__name__)
 
@@ -15,11 +23,32 @@ log = logging.getLogger(__name__)
 PRESETS = ["full", "map", "playerdata"]
 
 
+@dataclass(frozen=True)
+class RenderResult:
+    """What a render worker hands back to the cog.
+
+    A dataclass rather than a tuple: this is unpacked at three call sites
+    in cog_render.py, and a positional tuple makes a silent mis-order the
+    likely failure mode when a field is added.
+    """
+
+    output_path: str
+    duration: float
+    timings: dict
+    game_version: str
+    num_players: int
+    game_type: str
+    build_urls: list
+    chat_text: str
+    stats: MatchStats | None = None
+
+
 def _peak_rss_bytes() -> float:
     """Peak resident set size of this worker process, in bytes.
 
-    Reported back through the ``timings`` dict rather than the return tuple,
-    which is unpacked at three call sites and contract-tested.
+    Reported back through the ``timings`` dict rather than a ``RenderResult``
+    field, since that dataclass's field set is read at three call sites in
+    cog_render.py and contract-tested.
 
     ``ru_maxrss`` is a high-water mark that never resets, so with
     ``RENDER_MAX_TASKS_PER_CHILD`` unset (the prod default — long-lived forked
@@ -64,6 +93,38 @@ def _format_chat_log(replay) -> str:
     return "\n".join(lines)
 
 
+def _extract_dual_stats(replay_a, replay_b, vgd, flags, timings):
+    """Extract match stats from dual replays with fallback.
+
+    Either replay's BattleResults can cover every player in the match.
+    Tries A first, then B if A raises or returns None. Each attempt gets
+    its own try/except so a failure on A doesn't prevent trying B.
+
+    Returns the stats from whichever attempt succeeds; None if both fail.
+    Records the extraction time in timings["stats"].
+    """
+    from time import perf_counter
+
+    t_stats = perf_counter()
+    stats = None
+
+    for label, replay in (("a", replay_a), ("b", replay_b)):
+        try:
+            from renderer.stats_export import extract_match_stats
+
+            candidate = extract_match_stats(
+                replay, vgd, flags, neutral_perspective=True,
+            )
+            if candidate:
+                stats = candidate
+                break
+        except Exception:
+            log.exception("worker: dual stats extraction failed for replay %s", label)
+
+    timings["stats"] = perf_counter() - t_stats
+    return stats
+
+
 def render_replay(
     replay_path: str,
     output_path: str,
@@ -77,7 +138,7 @@ def render_replay(
     panel_width: int = 420,
     flags: frozenset[str] = frozenset(),
     theme: str = "default",
-) -> tuple[str, float, dict[str, float], str, int, str, list, str]:
+) -> RenderResult:
     """Parse and render a replay to mp4. Runs in a worker process.
 
     Presets:
@@ -89,8 +150,7 @@ def render_replay(
     every 50 frames (and on the last frame).
 
     Returns:
-        (output_path, replay_duration, timings, game_version, num_players,
-         game_type, build_urls, chat_text)
+        RenderResult
     """
     from pathlib import Path
     from time import perf_counter
@@ -230,11 +290,35 @@ def render_replay(
     )
 
     chat_text = _format_chat_log(replay)
+
+    # Post-battle stats for the Statistics button. Mirrors the build_urls
+    # treatment above: a schema break after a WoWs patch must degrade to a
+    # missing button, never a failed render.
+    t_stats = perf_counter()
+    stats = None
+    try:
+        from renderer.stats_export import extract_match_stats
+        stats = extract_match_stats(replay, vgd, flags)
+    except Exception:
+        log.exception("worker: stats extraction failed")
+    timings["stats"] = perf_counter() - t_stats
+    log.info(
+        "worker: stats %s in %.2fs",
+        "extracted" if stats else "unavailable", timings["stats"],
+    )
+
     game_type = replay.meta.get("gameType", "Unknown")
     timings["_peak_rss_bytes"] = _peak_rss_bytes()
-    return (
-        output_path, replay.duration, timings, replay.game_version,
-        len(replay.players), game_type, build_urls, chat_text,
+    return RenderResult(
+        output_path=output_path,
+        duration=replay.duration,
+        timings=timings,
+        game_version=replay.game_version,
+        num_players=len(replay.players),
+        game_type=game_type,
+        build_urls=build_urls,
+        chat_text=chat_text,
+        stats=stats,
     )
 
 
@@ -251,12 +335,12 @@ def render_dual_replay(
     panel_width: int = 420,
     flags: frozenset[str] = frozenset(),
     theme: str = "default",
-) -> tuple[str, float, dict[str, float], str, int, str, list, str]:
+) -> RenderResult:
     """Dual-perspective merged render of two replays from the same match.
 
-    Returns the same tuple shape as render_replay so the cog handler can
-    unpack uniformly. build_urls is always empty (no self-player in the
-    merged/neutral-observer view); chat_text aggregates ChatEvents from
+    Returns the same RenderResult shape as render_replay so the cog handler
+    can consume it uniformly. build_urls is always empty (no self-player in
+    the merged/neutral-observer view); chat_text aggregates ChatEvents from
     the merged stream so dedup matches what the killfeed layer shows.
     """
     from pathlib import Path
@@ -356,9 +440,23 @@ def render_dual_replay(
     timings["build_urls"] = 0.0
 
     chat_text = _format_chat_log(merged)
+
+    stats = _extract_dual_stats(replay_a, replay_b, vgd, flags, timings)
+    log.info(
+        "worker: dual stats %s in %.2fs",
+        "extracted" if stats else "unavailable", timings["stats"],
+    )
+
     game_type = merged.meta.get("gameType", "Unknown") if hasattr(merged, "meta") else "Unknown"
     timings["_peak_rss_bytes"] = _peak_rss_bytes()
-    return (
-        output_path, merged.duration, timings, merged.game_version,
-        len(merged.players), game_type, [], chat_text,
+    return RenderResult(
+        output_path=output_path,
+        duration=merged.duration,
+        timings=timings,
+        game_version=merged.game_version,
+        num_players=len(merged.players),
+        game_type=game_type,
+        build_urls=[],
+        chat_text=chat_text,
+        stats=stats,
     )

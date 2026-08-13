@@ -38,6 +38,7 @@ The project was developed on Wargaming's request for the community.
 - Configurable speed, resolution, FPS, time range, and quality (with input validation)
 - Direct FFmpeg pipe with async frame writer (~17ms/frame at 1080p)
 - **Discord bot** — `/render` slash command with progress reporting, game type display, per-phase timing breakdown
+- **Statistics button** — on-demand post-battle stats board PNG covering every player in the match, built from the replay's post-battle results packet
 - **Docker support** — multi-stage build with persistent gamedata cache volume
 
 ---
@@ -396,6 +397,18 @@ All config is via environment variables (or `.env` file):
 | `MAX_UPLOAD_MB` | `50` | Max replay file size |
 
 The bot renders replays in a `ProcessPoolExecutor` (separate processes for CPU-bound cairo work), reports progress to Discord in real-time, and includes game type, match duration, render time, and file size in the response. Detailed per-phase timing (resolve/parse/setup/render/encode/upload + per-layer init) is logged for performance monitoring.
+
+### Buttons
+
+Each render reply carries up to three buttons, each shown only when the
+underlying data is available for that replay:
+
+- **Show Builds** — ShipBuilder links for every player's fitting.
+- **Download Chat** — the match's chat log as a text attachment.
+- **Statistics** — a post-battle stats board PNG covering every player in
+  the match, built from the replay's post-battle results packet. Not shown
+  for replays that end before that packet arrives. Honors the `anonymize`
+  flag and the render's theme.
 
 ### Presets
 
