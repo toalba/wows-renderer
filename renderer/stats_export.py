@@ -119,6 +119,62 @@ def ribbon_columns(player: Any) -> tuple[int, int, int, int]:
     )
 
 
+def ribbons_readable(player: Any) -> bool:
+    """Whether this player's ribbon tail can be trusted.
+
+    Same 538-element check ribbon_columns uses. Pre-15.3 replays carry
+    shorter rows, and `PlayerBattleResult.ribbon_counts()` has no guard of
+    its own — it happily reads whatever integers sit at ``raw[481 + id]``
+    and returns them. On a 503-element row that yields a near-empty dict
+    with the occasional bogus entry, which renders as a plausible-looking
+    but wrong ribbon strip.
+    """
+    return len(getattr(player, "raw", ())) >= BR_ROW_LEN
+
+
+def player_ribbons(player: Any) -> tuple[tuple[int, int], ...]:
+    """Every ribbon this player earned, as (ribbon_id, count) pairs.
+
+    Empty when the row is too short to trust — callers distinguish that
+    from "earned nothing" via :func:`ribbons_readable`.
+    """
+    if not ribbons_readable(player):
+        return ()
+    return tuple(sorted(player.ribbon_counts().items()))
+
+
+def resolve_ribbon_icons(gui_dir: Any) -> tuple[tuple[int, str], ...]:
+    """(ribbon_id, absolute png path) for every ribbon icon on disk.
+
+    Runs worker-side on purpose. The id -> filename mapping needs the
+    parser's ``RIBBON_WIRE_IDS``, and the files live under the versioned
+    gamedata tree — both dependencies the board must not have. Resolving to
+    plain paths here means the board only ever opens files.
+
+    Returns an empty tuple if the directory is missing or unreadable; the
+    board falls back to text in that case rather than failing.
+    """
+    from pathlib import Path
+
+    gui = Path(gui_dir)
+    if not gui.is_dir():
+        return ()
+    try:
+        from renderer.layers.ribbons import _build_icon_paths
+    except Exception:
+        return ()
+
+    out: list[tuple[int, str]] = []
+    try:
+        for rid, rel in _build_icon_paths(gui).items():
+            path = gui / rel
+            if path.is_file():
+                out.append((rid, str(path)))
+    except Exception:
+        return ()
+    return tuple(sorted(out))
+
+
 @dataclass(frozen=True)
 class PlayerStats:
     """One row of the statistics board. All display-ready."""
@@ -165,6 +221,13 @@ class PlayerStats:
     killed_by: str           # "" when the player survived
     killer_weapon: str       # "" when the player survived
 
+    # Every ribbon this player earned, as (ribbon_id, count) pairs in
+    # descending-id-agnostic wire order. A tuple rather than a dict so the
+    # dataclass stays frozen and hashable. Empty when the results row is too
+    # short for the ribbon offset to be trustworthy — see ribbons_available
+    # on MatchStats, which distinguishes "earned none" from "cannot read".
+    ribbons: tuple[tuple[int, int], ...] = ()
+
 
 @dataclass(frozen=True)
 class MatchStats:
@@ -176,6 +239,19 @@ class MatchStats:
     duration_sec: int
     winner_team: int                   # display team; -1 = draw/unknown
     neutral_perspective: bool          # True for dual renders (no recorder)
+
+    # False when this replay's results rows are too short for the ribbon
+    # tail offset to be trustworthy (pre-15.3 builds). The board must say
+    # "unavailable" rather than draw an empty strip, because an empty strip
+    # is indistinguishable from a player who earned nothing.
+    ribbons_available: bool = False
+
+    # (ribbon_id, absolute png path) for every ribbon icon that exists on
+    # disk. Resolved in the worker, which already has the parser and the
+    # versioned gamedata; the board only opens files. That is what keeps
+    # stats_board free of parser and gamedata imports while still drawing
+    # real ribbon art.
+    ribbon_icons: tuple[tuple[int, str], ...] = ()
 
 
 def _display_team(raw_team_id: int, self_team_id: int) -> int:
@@ -203,6 +279,7 @@ def _player_row(
     weapon = "" if survived else death_reason_label(int(_num(stats, "killer_weapon")))
 
     citadels, pens, overpens, shatters = ribbon_columns(player)
+    ribbons = player_ribbons(player)
 
     return PlayerStats(
         name=str(stats.get("name") or ""),
@@ -252,6 +329,7 @@ def _player_row(
         life_time_sec=int(_num(stats, "life_time_sec")),
         killed_by=killed_by,
         killer_weapon=weapon,
+        ribbons=ribbons,
     )
 
 
@@ -288,6 +366,7 @@ def build_match_stats(
     meta: dict[str, Any],
     flags: frozenset[str] = frozenset(),
     neutral_perspective: bool = False,
+    ribbon_icons: tuple[tuple[int, str], ...] = (),
 ) -> MatchStats:
     """Assemble display-ready stats. Pure — no replay, no gamedata I/O."""
     name_by_db_id = {
@@ -319,6 +398,13 @@ def build_match_stats(
         duration_sec=int(meta.get("duration_sec") or 0),
         winner_team=winner,
         neutral_perspective=neutral_perspective,
+        # One replay's rows are all the same width, so any player answers
+        # this. `all` rather than `any` so a mixed payload — which would
+        # mean the schema assumption is already wrong — degrades to text.
+        ribbons_available=bool(results.players) and all(
+            ribbons_readable(p) for p in results.players.values()
+        ),
+        ribbon_icons=ribbon_icons,
     )
 
 
@@ -348,6 +434,13 @@ def extract_match_stats(
         "duration_sec": int(getattr(replay, "duration", 0) or 0),
     }
 
+    icons: tuple[tuple[int, str], ...] = ()
+    if vgd is not None:
+        try:
+            icons = resolve_ribbon_icons(vgd.version_dir / "data" / "gui")
+        except Exception:
+            icons = ()
+
     return build_match_stats(
         results=results,
         ships_db=(vgd.ships_db if vgd is not None else {}),
@@ -355,4 +448,5 @@ def extract_match_stats(
         meta=meta,
         flags=flags,
         neutral_perspective=neutral_perspective,
+        ribbon_icons=icons,
     )

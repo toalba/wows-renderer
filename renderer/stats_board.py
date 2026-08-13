@@ -65,18 +65,17 @@ def _mmss(seconds: int) -> str:
 
 
 def _killed_by_text(p: PlayerStats) -> str:
-    """Who killed them, and with what — per the design spec's own phrasing.
+    """Who killed them — name only.
 
-    `killed_by` (a roster name) and `killer_weapon` (a DEATH_REASON label)
-    are independent: a player killed by fire/flood/terrain has no named
-    killer but does have a weapon, and would otherwise render identically
-    to a survivor (both show "—", with only the HP column telling them
-    apart). `killed_by` and `killer_weapon` are only ever non-empty
-    together when the player died, so "—" here implies survival.
+    The weapon label (`killer_weapon`, a DEATH_REASON string) is carried on
+    PlayerStats but deliberately not rendered: appending "(ARTILLERY)" made
+    this the widest column on the board for information nobody was reading.
+
+    Consequence worth knowing: a player killed by fire/flood/terrain has a
+    weapon but no named killer, so they render "—" exactly like a survivor,
+    and only the HP column tells them apart.
     """
-    if p.killed_by and p.killer_weapon:
-        return f"{p.killed_by} ({p.killer_weapon})"
-    return p.killed_by or p.killer_weapon or "—"
+    return p.killed_by or "—"
 
 
 COLUMNS: tuple[Column, ...] = (
@@ -113,7 +112,7 @@ COLUMNS: tuple[Column, ...] = (
 )
 
 
-def _measure(stats: MatchStats) -> list[float]:
+def _measure(stats: MatchStats, columns: tuple[Column, ...] = COLUMNS) -> list[float]:
     """Column widths from rendered content: max(label, every cell) + gap.
 
     Left-aligned text columns are capped at MAX_TEXT_CELL_W so one long
@@ -125,7 +124,7 @@ def _measure(stats: MatchStats) -> list[float]:
     cr.set_font_size(FONT_SIZE)
 
     widths = []
-    for col in COLUMNS:
+    for col in columns:
         content_w = cr.text_extents(col.label).width
         for p in stats.players:
             w = cr.text_extents(col.fmt(p)).width
@@ -261,13 +260,16 @@ def _draw_title(cr: cairo.Context, stats: MatchStats, width: float, theme: str) 
     cr.stroke()
 
 
-def _draw_header(cr: cairo.Context, widths: list[float], xs: list[float], y: float) -> None:
+def _draw_header(
+    cr: cairo.Context, widths: list[float], xs: list[float], y: float,
+    columns: tuple[Column, ...] = COLUMNS,
+) -> None:
     cr.select_font_face(FONT, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
     cr.set_font_size(FONT_SIZE)
     baseline = _baseline_in(cr, y, HEADER_H)
     cr.set_source_rgb(*LABEL_SECONDARY)
 
-    for col, x, w in zip(COLUMNS, xs, widths, strict=True):
+    for col, x, w in zip(columns, xs, widths, strict=True):
         text = col.label
         tw = cr.text_extents(text).width
         tx = _cell_x(x, w, tw, col.align)
@@ -284,8 +286,9 @@ def _draw_header(cr: cairo.Context, widths: list[float], xs: list[float], y: flo
 
 def _draw_row(
     cr: cairo.Context, player: PlayerStats, widths: list[float], xs: list[float], y: float, theme: str,
+    columns: tuple[Column, ...] = COLUMNS, row_w: float | None = None,
 ) -> None:
-    table_w = sum(widths)
+    table_w = sum(widths) if row_w is None else row_w
 
     r, g, b, a = _row_fill(player, theme)
     cr.set_source_rgba(r, g, b, a)
@@ -302,7 +305,7 @@ def _draw_row(
     cr.set_font_size(FONT_SIZE)
     baseline = _baseline_in(cr, y, ROW_H)
 
-    for col, x, w in zip(COLUMNS, xs, widths, strict=True):
+    for col, x, w in zip(columns, xs, widths, strict=True):
         text = col.fmt(player)
         color, alpha = _cell_style(col, player)
         if col.align == "left":
@@ -314,11 +317,156 @@ def _draw_row(
         cr.show_text(text)
 
 
-def render_stats_board(stats: MatchStats, theme: str = "default") -> bytes:
-    """Render the post-battle statistics board and return PNG bytes."""
-    widths = _measure(stats)
+# --------------------------------------------------------------------------
+# Ribbon strip
+# --------------------------------------------------------------------------
+
+# Main ribbons only, in in-game display order. The sub-ribbons (pen /
+# overpen / shatter / ricochet, ids in _SUB_RIBBON_IDS) are deliberately
+# excluded: they carry by far the largest counts and dominated the strip's
+# width without adding much a reader acts on.
+STRIP_RIBBON_IDS: tuple[int, ...] = (5, 8, 4, 6, 7, 1, 19, 3, 10, 9, 13, 0)
+
+STRIP_ICON_H = 20.0       # drawn height; ribbon art is 133x51 or 65x51
+STRIP_COUNT_FONT = 11
+STRIP_ICON_GAP = 2        # icon -> its own count
+STRIP_ITEM_GAP = 9        # count -> next icon
+STRIP_PAD = 16            # last column -> strip start
+
+
+def _load_icons(stats: MatchStats) -> dict[int, cairo.ImageSurface]:
+    """Ribbon surfaces keyed by id, for the ids the strip actually draws.
+
+    Paths were resolved worker-side (see stats_export.resolve_ribbon_icons)
+    so this module never needs the parser or the gamedata tree. A file that
+    is missing or unreadable is skipped rather than raised on — the strip
+    degrades to whatever loaded, and an empty result makes the caller fall
+    back to the detailed text layout.
+    """
+    wanted = set(STRIP_RIBBON_IDS)
+    icons: dict[int, cairo.ImageSurface] = {}
+    for rid, path in stats.ribbon_icons:
+        if rid not in wanted:
+            continue
+        try:
+            icons[rid] = cairo.ImageSurface.create_from_png(path)
+        except Exception:
+            continue
+    return icons
+
+
+def _blit(cr: cairo.Context, surf: cairo.ImageSurface, x: float, y: float, h: float) -> float:
+    """Draw surf top-left at (x, y) scaled to height h. Returns drawn width."""
+    scale = h / surf.get_height()
+    cr.save()
+    cr.translate(x, y)
+    cr.scale(scale, scale)
+    cr.set_source_surface(surf, 0, 0)
+    cr.paint()
+    cr.restore()
+    return surf.get_width() * scale
+
+
+def _strip_items(player: PlayerStats) -> list[tuple[int, int]]:
+    """(ribbon_id, count) for this player, in strip display order."""
+    counts = dict(player.ribbons)
+    return [(rid, counts[rid]) for rid in STRIP_RIBBON_IDS if counts.get(rid)]
+
+
+def _strip_width(cr: cairo.Context, player: PlayerStats,
+                 icons: dict[int, cairo.ImageSurface]) -> float:
+    cr.set_font_size(STRIP_COUNT_FONT)
+    total = 0.0
+    for rid, n in _strip_items(player):
+        if rid not in icons:
+            continue
+        total += icons[rid].get_width() * (STRIP_ICON_H / icons[rid].get_height())
+        total += STRIP_ICON_GAP + cr.text_extents(f"x{n}").width + STRIP_ITEM_GAP
+    return total
+
+
+def _draw_strip(cr: cairo.Context, player: PlayerStats,
+                icons: dict[int, cairo.ImageSurface], x: float, y: float) -> None:
+    icon_y = y + (ROW_H - STRIP_ICON_H) / 2
+    for rid, n in _strip_items(player):
+        if rid not in icons:
+            continue
+        x += _blit(cr, icons[rid], x, icon_y, STRIP_ICON_H) + STRIP_ICON_GAP
+        cr.set_font_size(STRIP_COUNT_FONT)
+        cr.set_source_rgb(*LABEL_PRIMARY)
+        label = f"x{n}"
+        cr.move_to(x, _baseline_in(cr, y, ROW_H))
+        cr.show_text(label)
+        x += cr.text_extents(label).width + STRIP_ITEM_GAP
+
+
+# --------------------------------------------------------------------------
+# Layouts
+# --------------------------------------------------------------------------
+
+# Compact: the columns the ribbon strip cannot express. Everything dropped
+# from the detailed set is either carried by a ribbon (kills, hits, fires,
+# floods, citadels, pens, overpens, shatters, crits, planes) or was traded
+# away for width (accuracy, major crits, module breaks, caps, resets, first
+# spots, torps spotted, AA damage).
+COMPACT_KEYS: tuple[str, ...] = (
+    "name", "ship_name", "damage", "received", "spotting", "potential",
+    "distance_km", "xp", "hp_remaining", "life_time_sec", "killed_by",
+)
+COMPACT_COLUMNS: tuple[Column, ...] = tuple(
+    c for k in COMPACT_KEYS for c in COLUMNS if c.key == k
+)
+
+LAYOUTS = ("compact", "detailed")
+
+
+def _use_strip(stats: MatchStats, layout: str) -> bool:
+    """Whether to draw ribbons rather than the full column set.
+
+    Requires the caller to have asked for it, the replay's rows to be long
+    enough for the ribbon tail to be trustworthy, and at least one icon to
+    have loaded. Any of those failing falls back to the detailed table,
+    which needs nothing beyond the numbers already in MatchStats.
+    """
+    return layout == "compact" and stats.ribbons_available and bool(stats.ribbon_icons)
+
+
+def render_stats_board(
+    stats: MatchStats, theme: str = "default", layout: str = "compact",
+) -> bytes:
+    """Render the post-battle statistics board and return PNG bytes.
+
+    ``layout``:
+      * ``"compact"`` (default) — 11 columns plus a per-player ribbon strip.
+        Falls back to ``"detailed"`` when ribbons can't be read for this
+        replay build or no icons loaded.
+      * ``"detailed"`` — all 29 numeric columns, no ribbons. Needs no
+        gamedata, so it also serves as the universal fallback.
+    """
+    if layout not in LAYOUTS:
+        raise ValueError(f"unknown layout {layout!r} (known: {LAYOUTS})")
+
+    compact = _use_strip(stats, layout)
+    columns = COMPACT_COLUMNS if compact else COLUMNS
+    icons = _load_icons(stats) if compact else {}
+    if compact and not icons:
+        compact, columns = False, COLUMNS
+
+    widths = _measure(stats, columns)
     xs = _column_x(widths)
-    width = sum(widths) + 2 * PAD_X
+    table_w = sum(widths)
+
+    strip_x = PAD_X + table_w + STRIP_PAD
+    strip_w = 0.0
+    if compact:
+        probe = cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1))
+        probe.select_font_face(FONT, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+        strip_w = max(
+            (_strip_width(probe, p, icons) for p in stats.players), default=0.0,
+        )
+        strip_w = max(strip_w, probe.text_extents("Ribbons").width)
+
+    width = (strip_x + strip_w + PAD_X) if compact else (table_w + 2 * PAD_X)
     height = (
         TITLE_H + HEADER_H + len(stats.players) * ROW_H
         + _team_gaps(stats.players) * TEAM_GAP + PAD_X
@@ -330,14 +478,22 @@ def render_stats_board(stats: MatchStats, theme: str = "default") -> bytes:
     cr.paint()
 
     _draw_title(cr, stats, width, theme)
-    _draw_header(cr, widths, xs, TITLE_H)
+    _draw_header(cr, widths, xs, TITLE_H, columns)
+    if compact:
+        cr.set_font_size(FONT_SIZE)
+        cr.set_source_rgb(*LABEL_SECONDARY)
+        cr.move_to(strip_x, _baseline_in(cr, TITLE_H, HEADER_H))
+        cr.show_text("Ribbons")
 
+    row_w = width - 2 * PAD_X if compact else None
     y: float = TITLE_H + HEADER_H
     prev_team: int | None = None
     for player in stats.players:
         if prev_team is not None and player.team != prev_team:
             y += TEAM_GAP
-        _draw_row(cr, player, widths, xs, y, theme)
+        _draw_row(cr, player, widths, xs, y, theme, columns, row_w)
+        if compact:
+            _draw_strip(cr, player, icons, strip_x, y)
         y += ROW_H
         prev_team = player.team
 

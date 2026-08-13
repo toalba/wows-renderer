@@ -280,3 +280,44 @@ def test_cap_columns_read_the_populated_fields(battle_results):
     assert all(
         not p.stat("capture_points") for p in battle_results.players.values()
     ), "fixture no longer demonstrates the dead field — revisit this mapping"
+
+
+def test_player_ribbons_empty_on_short_rows(battle_results):
+    """`PlayerBattleResult.ribbon_counts()` has no bounds guard of its own —
+    on a pre-15.3 row it reads whatever integers sit at raw[481 + id] and
+    returns them. That renders as a plausible-looking but wrong strip, so
+    the export layer must withhold the data entirely."""
+    from wows_replay_parser.battle_results import PlayerBattleResult
+
+    from renderer.stats_export import player_ribbons, ribbons_readable
+
+    short = PlayerBattleResult(db_id=1, stats={}, extra={}, raw=[7] * 503)
+    assert ribbons_readable(short) is False
+    assert player_ribbons(short) == ()
+
+    full = next(iter(battle_results.players.values()))
+    assert ribbons_readable(full) is True
+    assert player_ribbons(full), "fixture player should have earned ribbons"
+
+
+def test_ribbons_available_reflects_row_width(battle_results):
+    stats = _build(battle_results)
+    assert stats.ribbons_available is True
+    assert any(p.ribbons for p in stats.players)
+
+
+def test_ribbons_survive_pickling(battle_results):
+    """MatchStats crosses a ProcessPoolExecutor boundary; the ribbon pairs
+    are a tuple rather than a dict precisely so the frozen dataclass stays
+    trivially picklable."""
+    import pickle
+
+    stats = _build(battle_results)
+    assert pickle.loads(pickle.dumps(stats)) == stats
+
+
+def test_resolve_ribbon_icons_tolerates_a_missing_directory(tmp_path):
+    """A gamedata miss must degrade the ribbons, not raise into the render."""
+    from renderer.stats_export import resolve_ribbon_icons
+
+    assert resolve_ribbon_icons(tmp_path / "nope") == ()

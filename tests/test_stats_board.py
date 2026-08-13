@@ -161,12 +161,18 @@ def test_long_name_is_capped_and_ellipsised():
     assert render_stats_board(m)[:8] == b"\x89PNG\r\n\x1a\n"
 
 
-def test_killed_by_column_renders_the_weapon():
-    """The design spec asks for "who killed them and with what" — before
-    this, COLUMNS' killed_by formatter ignored killer_weapon entirely, so a
-    player killed by fire/flood/terrain (killed_by="", killer_weapon set)
-    rendered identically to a survivor: both showed "—", distinguishable
-    only via the HP column.
+def test_killed_by_column_renders_the_name_only():
+    """Superseded behaviour, pinned deliberately.
+
+    An earlier round rendered "Player09 (HE)" here, following the design
+    spec's "who killed them and with what". Seen on a real board that made
+    Killed by the widest column on the sheet, so the weapon was dropped.
+    `killer_weapon` is still carried on PlayerStats for any future consumer.
+
+    The accepted cost: a fire/flood/terrain death (killed_by="", weapon set)
+    renders "—" exactly like a survivor, and only the HP column separates
+    them. That is why this asserts the empty case explicitly rather than
+    leaving it implied.
     """
     from renderer.stats_board import COLUMNS
 
@@ -175,12 +181,11 @@ def test_killed_by_column_renders_the_weapon():
     survivor = _player("Survivor", 0, 1_000, killed_by="", killer_weapon="", hp_remaining=1_000)
     assert fmt(survivor) == "—"
 
-    # Fire/flood/terrain: no named killer, but a weapon label.
     burned = _player("Burned", 0, 1_000, killed_by="", killer_weapon="FIRE", hp_remaining=0)
-    assert fmt(burned) == "FIRE"
+    assert fmt(burned) == "—"
 
     named_kill = _player("Sunk", 0, 1_000, killed_by="Player09", killer_weapon="HE", hp_remaining=0)
-    assert fmt(named_kill) == "Player09 (HE)"
+    assert fmt(named_kill) == "Player09"
 
 
 def test_golden_image(tmp_path):
@@ -194,3 +199,119 @@ def test_golden_image(tmp_path):
     out.write_bytes(render_stats_board(_match()))
     passed, mse = compare_images(out, "stats_board")
     assert passed, f"stats board drifted from baseline (mse={mse:.5f})"
+
+
+def _fake_icon(tmp_path, rid: int):
+    """A 1x1 PNG standing in for a ribbon, so layout tests need no gamedata."""
+    import cairo as _c
+
+    p = tmp_path / f"ribbon_{rid}.png"
+    surf = _c.ImageSurface(_c.FORMAT_ARGB32, 4, 4)
+    surf.write_to_png(str(p))
+    return (rid, str(p))
+
+
+def _match_with_ribbons(tmp_path, n=6):
+    """A match whose ribbons are readable and whose icons exist on disk."""
+    import dataclasses
+
+    from renderer.stats_board import STRIP_RIBBON_IDS
+
+    m = _match(n)
+    players = tuple(
+        dataclasses.replace(p, ribbons=((5, 2), (8, 3), (0, 41)))
+        for p in m.players
+    )
+    return dataclasses.replace(
+        m, players=players, ribbons_available=True,
+        ribbon_icons=tuple(_fake_icon(tmp_path, r) for r in STRIP_RIBBON_IDS),
+    )
+
+
+def test_compact_layout_is_narrower_than_detailed(tmp_path):
+    """The compact board trades 18 columns for a ribbon strip; if it were
+    not actually narrower the trade would be pointless."""
+    from PIL import Image
+
+    from renderer.stats_board import render_stats_board
+
+    m = _match_with_ribbons(tmp_path)
+    compact = tmp_path / "c.png"
+    detailed = tmp_path / "d.png"
+    compact.write_bytes(render_stats_board(m, layout="compact"))
+    detailed.write_bytes(render_stats_board(m, layout="detailed"))
+    assert Image.open(compact).width < Image.open(detailed).width
+
+
+def test_falls_back_to_detailed_when_ribbons_unreadable(tmp_path):
+    """Pre-15.3 replays: rather than draw an empty strip — indistinguishable
+    from a player who earned nothing — show the full column set, which needs
+    no gamedata at all."""
+    import dataclasses
+
+    from renderer.stats_board import render_stats_board
+
+    m = _match_with_ribbons(tmp_path)
+    unreadable = dataclasses.replace(m, ribbons_available=False)
+    assert render_stats_board(unreadable, layout="compact") == \
+        render_stats_board(unreadable, layout="detailed")
+
+
+def test_falls_back_to_detailed_when_no_icons_resolved(tmp_path):
+    """Same fallback when gamedata is present but the icons are not."""
+    import dataclasses
+
+    from renderer.stats_board import render_stats_board
+
+    m = dataclasses.replace(_match_with_ribbons(tmp_path), ribbon_icons=())
+    assert render_stats_board(m, layout="compact") == \
+        render_stats_board(m, layout="detailed")
+
+
+def test_unreadable_icon_file_does_not_break_the_render(tmp_path):
+    """A corrupt PNG must degrade the strip, not raise out of the button."""
+    import dataclasses
+
+    from renderer.stats_board import render_stats_board
+
+    bad = tmp_path / "bad.png"
+    bad.write_bytes(b"not a png")
+    m = dataclasses.replace(_match_with_ribbons(tmp_path),
+                            ribbon_icons=((5, str(bad)),))
+    assert render_stats_board(m, layout="compact")[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_unknown_layout_is_rejected(tmp_path):
+    from renderer.stats_board import render_stats_board
+
+    with pytest.raises(ValueError, match="unknown layout"):
+        render_stats_board(_match_with_ribbons(tmp_path), layout="sideways")
+
+
+def test_strip_excludes_sub_ribbons():
+    """Pen/overpen/shatter/ricochet carry the largest counts and dominated
+    the strip's width; they were dropped on purpose."""
+    from renderer.stats_board import STRIP_RIBBON_IDS
+
+    sub_ribbon_ids = {14, 15, 16, 17, 20, 21, 22, 23, 25, 26, 28, 29, 30, 34, 35}
+    assert not (set(STRIP_RIBBON_IDS) & sub_ribbon_ids)
+
+
+def test_killed_by_shows_the_name_without_the_weapon():
+    """The weapon label made this the widest column on the board."""
+    from renderer.stats_board import _killed_by_text
+
+    p = _player("x", 0, 1, killed_by="Rammer", killer_weapon="ARTILLERY")
+    assert _killed_by_text(p) == "Rammer"
+
+    import dataclasses
+    assert _killed_by_text(dataclasses.replace(p, killed_by="")) == "—"
+
+
+def test_compact_columns_are_a_subset_of_detailed():
+    """COMPACT_COLUMNS selects from COLUMNS rather than redefining them, so
+    the detailed layout stays available and the two can't drift."""
+    from renderer.stats_board import COLUMNS, COMPACT_COLUMNS
+
+    assert len(COMPACT_COLUMNS) == 11
+    assert all(c in COLUMNS for c in COMPACT_COLUMNS)
