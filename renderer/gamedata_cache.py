@@ -532,15 +532,8 @@ class VersionedGamedata:
 # ── Tag resolution ─────────────────────────────────────────────────
 
 
-def _find_closest_tag(
-    gamedata_repo: Path,
-    target_build: int,
-) -> str | None:
-    """Find the closest version tag to *target_build*.
-
-    1. Exact match ``v{target_build}``.
-    2. Smallest absolute delta; ties prefer the older build.
-    """
+def _list_tag_builds(gamedata_repo: Path) -> list[tuple[int, str]]:
+    """List ``(build_id, tag)`` pairs for every numeric version tag."""
     try:
         result = subprocess.run(
             ["git", "tag", "-l", "v*"],
@@ -550,9 +543,9 @@ def _find_closest_tag(
             timeout=30,
         )
         if result.returncode != 0:
-            return None
+            return []
     except (subprocess.TimeoutExpired, FileNotFoundError):
-        return None
+        return []
 
     tags: list[tuple[int, str]] = []
     for line in result.stdout.splitlines():
@@ -560,7 +553,122 @@ def _find_closest_tag(
         build_str = tag.lstrip("v")
         if build_str.isdigit():
             tags.append((int(build_str), tag))
+    return tags
 
+
+def _newest_tag_build(gamedata_repo: Path) -> int | None:
+    """Highest build ID among local version tags, or None if there are none."""
+    tags = _list_tag_builds(gamedata_repo)
+    return max(build for build, _ in tags) if tags else None
+
+
+def _fetch_tags(gamedata_repo: Path) -> bool:
+    """Best-effort ``git fetch --tags``. False when it could not run.
+
+    Only called when an exact tag is missing, so the cost is paid on the
+    rare path rather than on every cache miss. Failure is not fatal: an
+    offline box with the right tag already local must keep working.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(gamedata_repo), "fetch", "--tags", "--prune"],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        log.warning("Could not fetch gamedata tags: %s", e)
+        return False
+    if result.returncode != 0:
+        log.warning(
+            "Could not fetch gamedata tags: %s",
+            result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "git failed",
+        )
+        return False
+    return True
+
+
+def resolve_source_tag(
+    gamedata_repo: Path,
+    build_id: str,
+    *,
+    allow_fetch: bool = True,
+) -> str:
+    """Resolve the gamedata tag to build *build_id* from.
+
+    Prefers the exact tag ``v{build_id}``. When it is missing, fetches once
+    (``allow_fetch``) and retries before falling back to the closest tag.
+
+    Substituting a neighbouring tag is correct for hotfix builds that ship
+    no gamedata change of their own (build 12116206 reuses v12116141). It
+    is *not* correct when the requested build is newer than every local
+    tag: that means the repo is behind upstream and the substituted data
+    describes an older wire format. Rendering anyway produces a confidently
+    wrong result — build 13015811 against v12830008 mis-maps the shifted
+    Avatar method table, so ``updateMinimapVisionInfo`` never decodes and
+    every ship reads as unspotted. Fail loudly instead.
+
+    Raises:
+        RuntimeError: No tags at all, or *build_id* is newer than all of them.
+    """
+    target = int(build_id)
+
+    def _exact() -> str | None:
+        return next(
+            (tag for build, tag in _list_tag_builds(gamedata_repo) if build == target),
+            None,
+        )
+
+    exact = _exact()
+    if exact is not None:
+        return exact
+
+    if allow_fetch:
+        log.info("Tag v%s not found locally — fetching gamedata tags", build_id)
+        if _fetch_tags(gamedata_repo):
+            exact = _exact()
+            if exact is not None:
+                return exact
+
+    newest = _newest_tag_build(gamedata_repo)
+    if newest is None:
+        raise RuntimeError(
+            f"No version tags found in {gamedata_repo}. "
+            f"Run 'git -C {gamedata_repo} fetch --tags' to populate them."
+        )
+
+    if target > newest:
+        raise RuntimeError(
+            f"Gamedata is behind the replay: build {build_id} is newer than "
+            f"every local tag (newest is v{newest}). Refusing to render "
+            f"against older gamedata — the wire format differs, which "
+            f"silently mis-decodes ship visibility and combat methods. "
+            f"Run 'git -C {gamedata_repo} fetch --tags --prune'; if the tag "
+            f"still does not exist, the gamedata pipeline has not published "
+            f"build {build_id} yet."
+        )
+
+    tag = _find_closest_tag(gamedata_repo, target)
+    if tag is None:  # pragma: no cover — guarded by the `newest is None` check
+        raise RuntimeError(f"No matching tag found for build {build_id}")
+    log.warning(
+        "Exact tag v%s not found; using closest older tag %s "
+        "(hotfix build with no gamedata change of its own)",
+        build_id, tag,
+    )
+    return tag
+
+
+def _find_closest_tag(
+    gamedata_repo: Path,
+    target_build: int,
+) -> str | None:
+    """Find the closest version tag to *target_build*.
+
+    1. Exact match ``v{target_build}``.
+    2. Smallest absolute delta; ties prefer the older build.
+    """
+    tags = _list_tag_builds(gamedata_repo)
     if not tags:
         return None
 
@@ -643,6 +751,19 @@ def _cache_is_current(
 
     cached_commit = info.get("commit")
     tag = info.get("tag", f"v{build_id}")
+
+    # Built from a substituted tag? Then the sentinel records that tag, and
+    # comparing it against itself below would report "current" forever —
+    # cementing a downgraded render. If the exact tag has since been fetched,
+    # rebuild from it.
+    exact_tag = f"v{build_id}"
+    if tag != exact_tag and _tag_commit(gamedata_repo, exact_tag) is not None:
+        log.warning(
+            "Cache for v%s was built from substituted tag %s, but v%s now "
+            "exists — rebuilding from the exact tag",
+            build_id, tag, build_id,
+        )
+        return False
 
     current_commit = _tag_commit(gamedata_repo, tag)
     if current_commit is None:
@@ -791,17 +912,9 @@ def ensure_version_cache(
     log.info("Populating cache for v%s...", build_id)
     t0 = time.monotonic()
 
-    # Find matching tag
-    tag = _find_closest_tag(gamedata_repo, int(build_id))
-    if tag is None:
-        raise RuntimeError(
-            f"No matching tag found for build {build_id} in {gamedata_repo}. "
-            "Run 'git fetch --tags' in the gamedata repo."
-        )
-    if tag != f"v{build_id}":
-        log.warning(
-            "Exact tag v%s not found, using closest: %s", build_id, tag,
-        )
+    # Find matching tag. Fetches once and refuses to downgrade when the
+    # replay is newer than every local tag (see resolve_source_tag).
+    tag = resolve_source_tag(gamedata_repo, build_id)
 
     # Create temp dir (PID-namespaced for concurrency safety)
     tmp_dir = cache_root / f"_tmp_{build_id}_{os.getpid()}"
