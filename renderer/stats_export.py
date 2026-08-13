@@ -12,10 +12,13 @@ nothing about replays.
 from __future__ import annotations
 
 import dataclasses
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from renderer.death_reasons import death_reason_label
+
+log = logging.getLogger(__name__)
 
 # Length of a playersPublicInfo row on the schema this module targets.
 # The four ribbon columns read raw[481 + ribbon_id]; a shorter row means
@@ -158,10 +161,15 @@ def resolve_ribbon_icons(gui_dir: Any) -> tuple[tuple[int, str], ...]:
 
     gui = Path(gui_dir)
     if not gui.is_dir():
+        log.warning("stats: ribbon gui dir missing (%s); board falls back to text", gui)
         return ()
     try:
         from renderer.layers.ribbons import _build_icon_paths
     except Exception:
+        # Broad on purpose: this runs on the path to a Discord button, and a
+        # parser-side break must degrade the board rather than fail a render.
+        # Logged because a silent permanent fallback is otherwise invisible.
+        log.exception("stats: cannot import ribbon icon mapping")
         return ()
 
     out: list[tuple[int, str]] = []
@@ -171,7 +179,10 @@ def resolve_ribbon_icons(gui_dir: Any) -> tuple[tuple[int, str], ...]:
             if path.is_file():
                 out.append((rid, str(path)))
     except Exception:
+        log.exception("stats: ribbon icon resolution failed under %s", gui)
         return ()
+    if not out:
+        log.warning("stats: no ribbon icons found under %s", gui)
     return tuple(sorted(out))
 
 
@@ -439,6 +450,7 @@ def extract_match_stats(
         try:
             icons = resolve_ribbon_icons(vgd.version_dir / "data" / "gui")
         except Exception:
+            log.exception("stats: ribbon icon lookup failed; board falls back to text")
             icons = ()
 
     return build_match_stats(

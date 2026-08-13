@@ -315,3 +315,54 @@ def test_compact_columns_are_a_subset_of_detailed():
 
     assert len(COMPACT_COLUMNS) == 11
     assert all(c in COLUMNS for c in COMPACT_COLUMNS)
+
+
+def test_ribbons_header_is_not_clipped_on_a_sparse_match(tmp_path):
+    """Regression: the "Ribbons" header is drawn at FONT_SIZE but was
+    measured at STRIP_COUNT_FONT, because _strip_width leaves the probe
+    context at the smaller size. When every player's strip is narrower than
+    the label — a match where nobody earned a tracked ribbon — that label
+    is what sizes the canvas, so it was cut off at the right edge.
+
+    Asserts on rendered pixels rather than on the measurement, so it fails
+    for a clipped header however the clipping arises.
+    """
+    import dataclasses
+
+    from PIL import Image
+
+    from renderer.stats_board import STRIP_RIBBON_IDS, render_stats_board
+
+    # id 54 (Assist) is real but not in STRIP_RIBBON_IDS, so every strip
+    # renders empty and the header alone determines the width.
+    m = _match_with_ribbons(tmp_path)
+    m = dataclasses.replace(
+        m, players=tuple(dataclasses.replace(p, ribbons=((54, 1),)) for p in m.players),
+    )
+    assert 54 not in STRIP_RIBBON_IDS
+
+    out = tmp_path / "sparse.png"
+    out.write_bytes(render_stats_board(m, layout="compact"))
+    img = Image.open(out).convert("RGBA")
+
+    # The rightmost column must be untouched background: any ink there means
+    # content ran off the edge.
+    bg = img.getpixel((img.width - 1, 0))
+    edge = [img.getpixel((img.width - 1, y)) for y in range(img.height)]
+    assert all(px == bg for px in edge), "content touches the right edge"
+
+
+def test_golden_image_compact(tmp_path):
+    """Pixel baseline for the compact layout — the detailed golden never
+    exercises the strip, which is how the header-clipping bug above reached
+    a green suite of 127 tests."""
+    from renderer.stats_board import render_stats_board
+    from tests.golden_image import compare_images, load_reference
+
+    if load_reference("stats_board_compact") is None:
+        pytest.skip("no baseline yet — generate with UPDATE_GOLDEN=1")
+
+    out = tmp_path / "compact.png"
+    out.write_bytes(render_stats_board(_match_with_ribbons(tmp_path), layout="compact"))
+    passed, mse = compare_images(out, "stats_board_compact")
+    assert passed, f"compact board drifted from baseline (mse={mse:.5f})"

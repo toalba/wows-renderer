@@ -672,12 +672,18 @@ underlying data isn't available:
   Two layouts, selected by `render_stats_board(..., layout=...)`:
   **compact** (default) is 11 columns plus a per-player ribbon strip drawn
   from the game's own ribbon art; **detailed** is all 29 numeric columns
-  and no ribbons. Compact silently falls back to detailed when the ribbon
-  tail can't be trusted for that replay's build (pre-15.3 rows are 503
-  elements, and the parser's `ribbon_counts()` has no bounds guard — it
-  would return misaligned integers), when no icons resolved, or when an
-  icon file won't load. Detailed needs no gamedata, which is what makes it
-  a safe universal fallback.
+  and no ribbons. Compact falls back to detailed when the ribbon tail can't
+  be trusted for that replay's build (pre-15.3 rows are 503 elements, and
+  the parser's `ribbon_counts()` has no bounds guard — it would return
+  misaligned integers), or when no icon loaded at all. A single corrupt
+  icon among good ones is skipped from the strip rather than triggering a
+  fallback. Detailed needs no gamedata, which is what makes it a safe
+  universal fallback.
+
+  Same-match width: 1656px compact vs 1967px detailed at 14 players, 2003
+  vs 2077 at 24. The saving shrinks as players are added, because the strip
+  grows while the dropped columns do not — compact is chosen for density
+  and legibility, not primarily for width.
 
   Ribbon icon paths are resolved **worker-side** by
   `stats_export.resolve_ribbon_icons()` and shipped on `MatchStats` as

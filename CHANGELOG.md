@@ -23,12 +23,15 @@ All notable changes to `wows-minimap-renderer` are documented here.
   packet. Hidden when a replay ends before that packet arrives. Respects the
   `anonymize` flag and the theme dropdown.
 - **Two board layouts.** *Compact* (default) is 11 columns plus a per-player
-  ribbon strip drawn with the game's own ribbon art — 1656px wide at 14
-  players against 2060px for the full sheet. *Detailed* keeps all 29 numeric
-  columns and no ribbons; it needs no gamedata, so it is also the automatic
-  fallback when ribbons can't be read for a replay's build (pre-15.3 results
-  rows are 503 elements and the parser's `ribbon_counts()` has no bounds
-  guard of its own), when no icons resolve, or when an icon file won't load.
+  ribbon strip drawn with the game's own ribbon art. On the same match it is
+  1656px against 1967px detailed at 14 players (311px saved), and 2003px
+  against 2077px at 24 (74px). The width saving shrinks with player count —
+  the point is density and legibility, not width. *Detailed* keeps all 29
+  numeric columns and no ribbons; it needs no gamedata, so it is also the
+  automatic fallback whenever ribbons can't be drawn: the replay's build
+  predates 15.3 (results rows are 503 elements, and the parser's
+  `ribbon_counts()` has no bounds guard of its own), or no icon loaded at
+  all. A single corrupt icon among good ones is skipped, not a fallback.
 - Ribbon icon paths are resolved worker-side and shipped on `MatchStats` as
   plain filesystem paths, so `stats_board.py` keeps its no-parser,
   no-gamedata import boundary while still drawing real ribbon art.

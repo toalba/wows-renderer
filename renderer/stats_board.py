@@ -464,6 +464,12 @@ def render_stats_board(
         strip_w = max(
             (_strip_width(probe, p, icons) for p in stats.players), default=0.0,
         )
+        # Reset the size before measuring the header: _strip_width leaves the
+        # probe at STRIP_COUNT_FONT, but this label is drawn at FONT_SIZE. On
+        # a sparse match — where every strip is narrower than the label — that
+        # mismatch is what sizes the canvas, and measuring 11pt for text drawn
+        # at 15pt clipped the header off the right edge.
+        probe.set_font_size(FONT_SIZE)
         strip_w = max(strip_w, probe.text_extents("Ribbons").width)
 
     width = (strip_x + strip_w + PAD_X) if compact else (table_w + 2 * PAD_X)
