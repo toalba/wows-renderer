@@ -1,5 +1,5 @@
 # tests/test_pool_fork_safety.py
-"""RenderCog._make_pool must use the "forkserver" multiprocessing start
+"""RenderService._make_pool must use the "forkserver" multiprocessing start
 method, not the default "fork".
 
 The bot's parent process imports renderer.stats_board (cairo) for the
@@ -14,11 +14,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
-pytest.importorskip("discord")
-
-from bot.cog_render import RenderCog  # noqa: E402
+from bot.render_service import RenderService
 
 
 def _double(x: int) -> int:
@@ -26,7 +22,7 @@ def _double(x: int) -> int:
     return x * 2
 
 
-def _stub_cog(*, max_workers: int = 1, render_max_tasks_per_child: int | None = None):
+def _stub_service(*, max_workers: int = 1, render_max_tasks_per_child: int | None = None):
     """A minimal object exposing just what _make_pool reads from self."""
     return SimpleNamespace(
         config=SimpleNamespace(
@@ -37,7 +33,7 @@ def _stub_cog(*, max_workers: int = 1, render_max_tasks_per_child: int | None = 
 
 
 def test_make_pool_uses_forkserver_start_method():
-    pool = RenderCog._make_pool(_stub_cog())
+    pool = RenderService._make_pool(_stub_service())
     try:
         assert pool._mp_context.get_start_method() == "forkserver"
     finally:
@@ -46,7 +42,7 @@ def test_make_pool_uses_forkserver_start_method():
 
 def test_make_pool_runs_a_trivial_task():
     """Not just configured correctly — actually usable end to end."""
-    pool = RenderCog._make_pool(_stub_cog())
+    pool = RenderService._make_pool(_stub_service())
     try:
         future = pool.submit(_double, 21)
         assert future.result(timeout=60) == 42
@@ -58,7 +54,7 @@ def test_make_pool_with_recycling_still_uses_forkserver():
     """max_tasks_per_child is incompatible with an explicit "fork"
     mp_context (ProcessPoolExecutor raises ValueError) but not with
     "forkserver" — this must keep working once recycling is enabled."""
-    pool = RenderCog._make_pool(_stub_cog(render_max_tasks_per_child=2))
+    pool = RenderService._make_pool(_stub_service(render_max_tasks_per_child=2))
     try:
         assert pool._mp_context.get_start_method() == "forkserver"
         future = pool.submit(_double, 10)

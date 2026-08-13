@@ -392,9 +392,19 @@ All config is via environment variables (or `.env` file):
 | `GAMEDATA_REPO_PATH` | `wows-gamedata` | Path to wows-gamedata git repo |
 | `GAMEDATA_CACHE_DIR` | `~/.cache/wows-gamedata` | Override cache directory |
 | `MAX_WORKERS` | `2` | Concurrent render processes |
+| `RENDER_MAX_TASKS_PER_CHILD` | *(unset)* | Recycle each worker after N renders (unset = no recycling) |
 | `RENDER_TIMEOUT` | `120` | Max seconds per render |
 | `COOLDOWN_SECONDS` | `60` | Per-user rate limit |
 | `MAX_UPLOAD_MB` | `50` | Max replay file size |
+| `AUTHORIZED_GUILD_IDS` | *(empty)* | Comma-separated guild IDs allowed to use `/render_batch` |
+| `ENABLE_BUILD_URLS` | `false` | Re-enable the ShipBuilder build-URL embed |
+| `METRICS_ENABLED` | `true` | Serve the Prometheus `/metrics` endpoint |
+| `METRICS_PORT` | `9108` | Port for `/metrics` (container-internal only) |
+| `API_TOKEN` | *(unset)* | Bearer token for the HTTP render API. Unset = API disabled. Min 16 chars |
+| `API_PORT` | `8080` | Port for the render API (container-internal only) |
+| `API_MAX_PENDING` | `4` | Queued + running API jobs before `429` |
+| `API_RESULT_TTL` | `3600` | Seconds a finished API result stays downloadable |
+| `CLOUDFLARE_TUNNEL_TOKEN` | *(unset)* | Token for the `cloudflared` sidecar (compose only) |
 
 The bot renders replays in a `ProcessPoolExecutor` (separate processes for CPU-bound cairo work), reports progress to Discord in real-time, and includes game type, match duration, render time, and file size in the response. Detailed per-phase timing (resolve/parse/setup/render/encode/upload + per-layer init) is logged for performance monitoring.
 
@@ -415,6 +425,102 @@ underlying data is available for that replay:
 The `/render` command exposes the three layouts described in
 [Render modes](#render-modes) above (`full`, `map`, `playerdata`)
 via a slash-command choice, with `full` as the default.
+
+---
+
+## HTTP Render API
+
+The same render pool is reachable over HTTP, so replays can be rendered from
+your own tooling instead of Discord. Set `API_TOKEN` to enable it; leave it
+unset and no server starts.
+
+**Jobs are asynchronous.** Cloudflare's edge aborts a proxied request that
+takes ~100 s to produce its first byte, and renders routinely take longer, so
+you submit a job, poll it, then download the artifact. Downloading is not
+time-limited — only time-to-first-byte is.
+
+Every route except `/healthz` requires `Authorization: Bearer $API_TOKEN`.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /v1/jobs` | Submit a render. Returns `202 {"job_id": "..."}` |
+| `GET /v1/jobs/{id}` | State, progress percent, error, result metadata |
+| `GET /v1/jobs/{id}/result` | The finished `.mp4` or `.png` |
+| `GET /healthz` | Unauthenticated liveness |
+
+`POST /v1/jobs` takes `multipart/form-data`:
+
+| Field | Applies to | Default | Notes |
+|---|---|---|---|
+| `replay` | all | *(required)* | A `.wowsreplay` file |
+| `replay_b` | `render_dual` | *(required there)* | Second replay from the **same match** |
+| `type` | — | `render` | `render`, `render_dual`, or `stats` |
+| `preset` | `render` | `full` | `full`, `map`, `playerdata` |
+| `theme` | all | `default` | `default`, `brandon` |
+| `flags` | all | *(none)* | Comma-separated; only `anonymize` is recognised |
+| `speed` | video jobs | `20` | 1–100× playback speed |
+| `fps` | video jobs | `20` | 1–60 |
+| `layout` | `stats` | `compact` | `compact` or `detailed` |
+
+Options that do not apply to the chosen `type` are rejected with `400` rather
+than ignored, so a misunderstanding surfaces immediately.
+
+```bash
+API=https://render-api.cb-tracker.eu
+TOKEN=...           # $API_TOKEN
+
+# 1. Submit
+JOB=$(curl -sS -X POST "$API/v1/jobs" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F replay=@battle.wowsreplay \
+  -F type=render -F preset=full -F speed=20 | jq -r .job_id)
+
+# 2. Poll until state is done or failed
+curl -sS "$API/v1/jobs/$JOB" -H "Authorization: Bearer $TOKEN" | jq
+# {"state":"running","progress":42,"status":"Rendering... 42%", ...}
+
+# 3. Download
+curl -sS -o battle.mp4 "$API/v1/jobs/$JOB/result" -H "Authorization: Bearer $TOKEN"
+```
+
+Status codes: `400` invalid request · `401` bad or missing token · `404`
+unknown job (including one whose result has expired) · `409` result not ready,
+or the job failed (the body carries the reason) · `413` upload over
+`MAX_UPLOAD_MB` · `429` more than `API_MAX_PENDING` jobs queued or running
+(honour `Retry-After`) · `500` internal error, details in the bot log only.
+
+Results are deleted `API_RESULT_TTL` seconds after a job finishes, and the job
+registry lives in memory: **restarting the bot drops queued jobs and any
+result not yet downloaded.**
+
+### Exposing it through a Cloudflare Tunnel
+
+The API port is `expose`d to the compose network only — never published on the
+host — so the tunnel plus the bearer token are the only way in. The bundled
+`cloudflared` service connects out; nothing needs to be port-forwarded.
+
+1. Cloudflare **Zero Trust → Networks → Tunnels → Create a tunnel**, connector
+   type `cloudflared`. Copy the token into `.env` as `CLOUDFLARE_TUNNEL_TOKEN`.
+2. On that tunnel, **Public Hostname → Add**: pick a subdomain (e.g.
+   `render-api`) on your domain, service **`http://bot:8080`** (`bot` is the
+   compose service name; use `API_PORT` if you changed it).
+3. Generate a token — `openssl rand -hex 32` — and set it as `API_TOKEN` in
+   `.env`.
+4. The `cloudflared` service sits behind a compose profile, so deployments that
+   don't want a public endpoint aren't stuck with a container looping on an
+   empty token. Add `COMPOSE_PROFILES=tunnel` to `.env` (after which plain
+   `docker compose up -d` includes it), or pass `--profile tunnel` each time.
+5. `docker compose up -d --build`, then verify:
+
+```bash
+docker compose ps                                      # cloudflared is present
+docker compose logs cloudflared | grep -i registered   # connector is up
+curl -sS https://render-api.example.com/healthz        # {"status":"ok"}
+```
+
+Because the mapping lives in the Cloudflare dashboard, changing the hostname
+later needs no redeploy. A Cloudflare Access policy in front of the hostname
+composes fine with the bearer token if you want a second layer.
 
 ---
 

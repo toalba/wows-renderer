@@ -14,6 +14,7 @@ dependencies = [
     "av>=17.0.1",
     "numpy>=2.0",
     "prometheus-client>=0.21",
+    "aiohttp>=3.12",
 ]
 
 [dependency-groups]

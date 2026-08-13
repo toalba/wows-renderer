@@ -22,6 +22,19 @@ log = logging.getLogger(__name__)
 # Preset names — used by cog as app_commands.Choice values
 PRESETS = ["full", "map", "playerdata"]
 
+# Render behavior flags exposed via the slash commands' `flags` param and the
+# HTTP API's `flags` field. Lives here rather than in the cog so the API can
+# validate them without importing discord.
+KNOWN_FLAGS = frozenset({"anonymize"})
+
+
+def parse_flags(raw: str | None) -> frozenset[str]:
+    """Parse a comma-separated flags string into a frozenset, dropping unknowns."""
+    if not raw:
+        return frozenset()
+    tokens = {t.strip().lower() for t in raw.split(",") if t.strip()}
+    return frozenset(tokens & KNOWN_FLAGS)
+
 
 @dataclass(frozen=True)
 class RenderResult:
@@ -41,6 +54,15 @@ class RenderResult:
     build_urls: list
     chat_text: str
     stats: MatchStats | None = None
+
+
+class StatsUnavailableError(RuntimeError):
+    """The replay carries no post-battle results packet (0x22).
+
+    Module level so it pickles back across the ProcessPoolExecutor boundary.
+    Not a bug: the recorder left before the results arrived, which the API
+    reports verbatim rather than as a generic failure.
+    """
 
 
 def _peak_rss_bytes() -> float:
@@ -458,5 +480,104 @@ def render_dual_replay(
         game_type=game_type,
         build_urls=[],
         chat_text=chat_text,
+        stats=stats,
+    )
+
+
+def render_stats(
+    replay_path: str,
+    output_path: str,
+    gamedata_path: str,
+    progress_queue: Queue | None = None,
+    *,
+    flags: frozenset[str] = frozenset(),
+    theme: str = "default",
+    layout: str = "compact",
+) -> RenderResult:
+    """Draw the post-battle statistics board to a PNG. Runs in a worker process.
+
+    The video path's equivalent of this work is a garnish that degrades to a
+    missing button (see render_replay), so it swallows exceptions. Here the
+    board *is* the product, so failures propagate: a replay without a results
+    packet raises StatsUnavailableError rather than writing nothing.
+
+    Emits only ``("status", str)`` progress messages — there is no frame loop
+    to report a percentage from.
+
+    Returns:
+        RenderResult with output_path pointing at the PNG. build_urls and
+        chat_text are empty; the same shape as the video jobs so one caller
+        can consume all three.
+    """
+    from pathlib import Path
+    from time import perf_counter
+
+    from wows_replay_parser import parse_replay
+
+    from renderer.gamedata_cache import VersionedGamedata, resolve_for_replay
+    from renderer.stats_board import LAYOUTS, render_stats_board
+    from renderer.stats_export import extract_match_stats
+    from renderer.themes import THEMES
+
+    # Validate before any parsing: render_stats_board would otherwise raise a
+    # bare KeyError from inside a draw call, minutes of work later.
+    if theme not in THEMES:
+        raise ValueError(f"unknown theme {theme!r} (known: {', '.join(sorted(THEMES))})")
+    if layout not in LAYOUTS:
+        raise ValueError(f"unknown layout {layout!r} (known: {', '.join(LAYOUTS)})")
+
+    timings: dict[str, float] = {}
+    gamedata_repo = Path(gamedata_path).parent  # gamedata_path is repo/data, parent is repo
+
+    log.info("worker: stats start replay=%s layout=%s", Path(replay_path).name, layout)
+    if progress_queue:
+        progress_queue.put(("status", "Parsing replay..."))
+
+    t0 = perf_counter()
+    try:
+        vgd = resolve_for_replay(replay_path, gamedata_repo)
+    except RuntimeError:
+        vgd = VersionedGamedata.from_gamedata_path(Path(gamedata_path))
+    timings["resolve"] = perf_counter() - t0
+
+    t1 = perf_counter()
+    replay = parse_replay(replay_path, str(vgd.entity_defs_path))
+    timings["parse"] = perf_counter() - t1
+    log.info("worker: stats parsed replay in %.2fs (%d players)", timings["parse"], len(replay.players))
+
+    if progress_queue:
+        progress_queue.put(("status", "Extracting statistics..."))
+
+    t2 = perf_counter()
+    stats = extract_match_stats(replay, vgd, flags)
+    timings["stats"] = perf_counter() - t2
+    if stats is None:
+        raise StatsUnavailableError(
+            "replay carries no post-battle results — the recording ended before "
+            "the results packet, so there are no statistics to draw",
+        )
+
+    if progress_queue:
+        progress_queue.put(("status", "Drawing stats board..."))
+
+    t3 = perf_counter()
+    png = render_stats_board(stats, theme, layout)
+    Path(output_path).write_bytes(png)
+    timings["render"] = perf_counter() - t3
+    log.info(
+        "worker: stats board drawn in %.2fs (%d players, %.0f KB)",
+        timings["render"], len(stats.players), len(png) / 1024,
+    )
+
+    timings["_peak_rss_bytes"] = _peak_rss_bytes()
+    return RenderResult(
+        output_path=output_path,
+        duration=replay.duration,
+        timings=timings,
+        game_version=replay.game_version,
+        num_players=len(replay.players),
+        game_type=replay.meta.get("gameType", "Unknown"),
+        build_urls=[],
+        chat_text="",
         stats=stats,
     )
