@@ -52,3 +52,7 @@ tests/golden_images/_diffs/
 tests/fixtures/replays/*.wowsreplay
 tests/fixtures/gamedata/
 tests/fixtures/outputs/
+board_previews/
+
+# Local dev compose overrides
+docker-compose.override.yml
