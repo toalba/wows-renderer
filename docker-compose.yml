@@ -14,12 +14,17 @@ services:
       - ./.git/modules/wows-gamedata:/app/.git/modules/wows-gamedata:ro
       - gamedata-cache:/root/.cache/wows-gamedata
 
-    # Prometheus /metrics. `expose`, not `ports` — reachable from the
-    # prometheus container on the compose network, never from the host or the
-    # internet. Override the port with METRICS_PORT in .env (and in
-    # monitoring/prometheus.yml) if 9108 collides.
+    # Both ports use `expose`, not `ports` — they are reachable from sibling
+    # containers on the compose network, never from the host or directly from
+    # the internet.
     expose:
+      # Prometheus /metrics, scraped by the prometheus container. Override with
+      # METRICS_PORT in .env (and in monitoring/prometheus.yml) if 9108 collides.
       - "9108"
+      # HTTP render API, reached by the cloudflared container below. Do NOT
+      # move this to `ports:` — a single bearer token guards it, and the
+      # tunnel is meant to be the only way in. Override with API_PORT.
+      - "8080"
 
     # Liveness — overrides the image HEALTHCHECK with the same semantics so
     # the check is visible in compose config even when the image cache is
@@ -64,6 +69,37 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+
+  # --- Public ingress -----------------------------------------------------
+  # Cloudflare tunnel for the render API. The tunnel is remotely managed: the
+  # hostname → service mapping lives in the Cloudflare Zero Trust dashboard
+  # (Public Hostname → http://bot:8080), so nothing here needs to change when
+  # the hostname does. Only CLOUDFLARE_TUNNEL_TOKEN goes in .env.
+  #
+  # Starts but stays useless without API_TOKEN set: the bot serves no API at
+  # all in that case (see BotConfig.api_token).
+  cloudflared:
+    image: cloudflare/cloudflared:2026.8.0
+    # Opt-in, so a deployment that doesn't want a public endpoint isn't stuck
+    # with a container crash-looping on an empty token. Enable it permanently
+    # by putting COMPOSE_PROFILES=tunnel in .env (then plain `docker compose
+    # up -d` includes it), or ad hoc with `docker compose --profile tunnel`.
+    profiles:
+      - tunnel
+    restart: unless-stopped
+    depends_on:
+      - bot
+    # Default-empty so compose doesn't warn in deployments that never enable
+    # the profile. With the profile on and no token, cloudflared exits and the
+    # restart policy makes that loud.
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    # Pure connector — a few MB in practice.
+    mem_limit: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
 
   # --- Monitoring ---------------------------------------------------------
   # Budget note: the host has 7.6 GB, the bot is capped at 4.5 GB and roughly

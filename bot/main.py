@@ -10,6 +10,7 @@ from discord.ext import commands
 from bot import metrics
 from bot.cog_render import RenderCog
 from bot.config import BotConfig
+from bot.render_service import RenderService
 
 log = logging.getLogger(__name__)
 
@@ -28,7 +29,20 @@ def main() -> None:
         if config.metrics_enabled:
             metrics.start_metrics_server(config.metrics_port)
 
-        await bot.add_cog(RenderCog(bot, config))
+        # One pool per process, shared by the cog and (when enabled) the
+        # HTTP API — MAX_WORKERS is sized against the host, so a second
+        # pool would oversubscribe CPU and the memory cap.
+        service = RenderService(config)
+
+        await bot.add_cog(RenderCog(bot, config, service))
+
+        # HTTP render API, before the tree syncs below: those can take a
+        # while, and there is no reason for the API to wait on Discord.
+        # No API_TOKEN → no server at all (see BotConfig.api_token).
+        if config.api_token:
+            await _start_api(config, service)
+        else:
+            log.info("Render API disabled (no API_TOKEN set)")
         # Per-guild sync for authorized guilds → commands appear instantly
         # (global sync can take up to ~1 hour to propagate). The gated
         # commands (/render_batch, /render_dual) are guild-only anyway.
@@ -61,6 +75,43 @@ def main() -> None:
         log.info("Logged in as %s", bot.user)
 
     bot.run(config.discord_token, log_handler=None)
+
+
+async def _start_api(config: BotConfig, service: RenderService) -> bool:
+    """Serve the render API on the bot's event loop.
+
+    Runs in-process on purpose: it shares the render pool with the cog. The
+    listening socket is never inherited by render workers — the pool's
+    forkserver helper is started from a clean process, the same reason the
+    metrics thread is safe (see bot/metrics.py).
+
+    Returns False (and logs) instead of raising if the port is unavailable.
+    Same rule as start_metrics_server: this runs inside setup_hook, where an
+    exception aborts bot startup entirely, and a busy port must not take
+    Discord down with it.
+
+    No graceful shutdown is wired up: job state is in memory and a restart
+    drops it by design, and the container stops the process outright.
+    """
+    from aiohttp import web
+
+    from bot.api import create_app
+
+    try:
+        runner = web.AppRunner(create_app(config, service))
+        await runner.setup()
+        await web.TCPSite(runner, "0.0.0.0", config.api_port).start()
+    except OSError:
+        log.exception(
+            "Render API: could not bind :%d — API disabled, Discord unaffected",
+            config.api_port,
+        )
+        return False
+    log.info(
+        "Render API listening on :%d (max_pending=%d, result_ttl=%ds)",
+        config.api_port, config.api_max_pending, config.api_result_ttl,
+    )
+    return True
 
 
 async def _populate_caches_bg(config: BotConfig) -> None:

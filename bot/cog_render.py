@@ -6,16 +6,13 @@ import contextlib
 import functools
 import io
 import logging
-import multiprocessing
 import queue
 import shutil
 import tempfile
 import time
 import zipfile
-from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
-from multiprocessing import Manager
 from pathlib import Path
 
 import discord
@@ -24,7 +21,8 @@ from discord.ext import commands
 
 from bot import metrics
 from bot.config import BotConfig
-from bot.worker import render_dual_replay, render_replay
+from bot.render_service import RenderService
+from bot.worker import parse_flags, render_dual_replay, render_replay
 from renderer.stats_board import render_stats_board
 from renderer.stats_export import MatchStats
 
@@ -245,21 +243,10 @@ class _RenderResultView(discord.ui.View):
         await interaction.followup.send(file=file)
         await interaction.message.edit(view=self)
 
-# Render behavior flags exposed via the slash commands' `flags` param.
-KNOWN_FLAGS = frozenset({"anonymize"})
-
 THEME_CHOICES = [
     app_commands.Choice(name="Default — green/red", value="default"),
     app_commands.Choice(name="Brandon — cyan/magenta", value="brandon"),
 ]
-
-
-def _parse_flags(raw: str | None) -> frozenset[str]:
-    """Parse a comma-separated flags string into a frozenset, dropping unknowns."""
-    if not raw:
-        return frozenset()
-    tokens = {t.strip().lower() for t in raw.split(",") if t.strip()}
-    return frozenset(tokens & KNOWN_FLAGS)
 
 
 def _batch_cooldown(interaction: discord.Interaction) -> app_commands.Cooldown | None:
@@ -346,63 +333,19 @@ class _BatchResult:
 
 
 class RenderCog(commands.Cog):
-    def __init__(self, bot: commands.Bot, config: BotConfig) -> None:
+    def __init__(self, bot: commands.Bot, config: BotConfig, render_service: RenderService) -> None:
         self.bot = bot
         self.config = config
-        self._pool = self._make_pool()
-        self._pool_lock = asyncio.Lock()
-        self._manager = Manager()
-
-    def _make_pool(self) -> ProcessPoolExecutor:
-        # forkserver, not the default "fork": this process imports
-        # renderer.stats_board (cairo) and draws with it on an
-        # asyncio.to_thread worker thread. fork() only duplicates the
-        # calling thread, so if a fork lands while that thread holds one of
-        # cairo's global font-cache mutexes, the lock's owner never gets
-        # copied into the child — the mutex is locked forever and that
-        # worker wedges until RENDER_TIMEOUT with no log trace. forkserver
-        # forks from a clean, single-threaded helper process instead, so it
-        # can never observe that lock held, and — unlike "spawn" — it does
-        # not re-import every module or reload the 15 MB GameParams pickle,
-        # so it doesn't reintroduce the ~5-10s-per-worker cost documented on
-        # BotConfig.render_max_tasks_per_child. Do not "simplify" this back
-        # to the default fork context.
-        return ProcessPoolExecutor(
-            max_workers=self.config.max_workers,
-            max_tasks_per_child=self.config.render_max_tasks_per_child,
-            mp_context=multiprocessing.get_context("forkserver"),
-        )
-
-    async def _replace_broken_pool(self, broken: ProcessPoolExecutor) -> ProcessPoolExecutor:
-        async with self._pool_lock:
-            if self._pool is broken:
-                log.warning(
-                    "ProcessPool broken, rebuilding (max_workers=%d, max_tasks_per_child=%s)",
-                    self.config.max_workers,
-                    self.config.render_max_tasks_per_child
-                    if self.config.render_max_tasks_per_child is not None
-                    else "unlimited",
-                )
-                broken.shutdown(wait=False, cancel_futures=True)
-                self._pool = self._make_pool()
-                metrics.record_pool_rebuild()
-            return self._pool
-
-    async def _submit_render(self, render_call: functools.partial) -> tuple[ProcessPoolExecutor, asyncio.Future]:
-        """Submit a render call to the pool, transparently rebuilding once if the pool is already broken."""
-        loop = asyncio.get_running_loop()
-        pool = self._pool
-        try:
-            future = loop.run_in_executor(pool, render_call)
-        except BrokenProcessPool:
-            pool = await self._replace_broken_pool(pool)
-            future = loop.run_in_executor(pool, render_call)
-        metrics.track_pool_future(future)
-        return pool, future
+        # The pool and progress-queue Manager live in RenderService, shared
+        # with the HTTP API when it is enabled — see that module for why
+        # there must only ever be one pool per process.
+        self.render_service = render_service
 
     async def cog_unload(self) -> None:
-        self._pool.shutdown(wait=False, cancel_futures=True)
-        self._manager.shutdown()
+        # Cog unload only happens at process shutdown in this bot, so tearing
+        # down the shared service here is safe. shutdown() is idempotent for
+        # the day that stops being true.
+        self.render_service.shutdown()
 
     @app_commands.command(name="render", description="Render a WoWS replay to minimap video")
     @app_commands.describe(
@@ -430,7 +373,7 @@ class RenderCog(commands.Cog):
     ) -> None:
         preset_value = preset.value if preset else "full"
         theme_value = theme.value if theme else "default"
-        flag_set = _parse_flags(flags)
+        flag_set = parse_flags(flags)
 
         # Validate
         if not replay.filename.endswith(".wowsreplay"):
@@ -461,7 +404,7 @@ class RenderCog(commands.Cog):
         output_name = Path(replay.filename).stem + ".mp4"
         output_path = Path(tmp_dir) / output_name
 
-        pool = self._pool  # hoisted so the outer BrokenProcessPool handler can always rebuild
+        pool = self.render_service.pool  # hoisted so the outer BrokenProcessPool handler can always rebuild
         tracked = metrics.RenderTracker("render", preset_value)
         try:
             # Download replay
@@ -470,7 +413,7 @@ class RenderCog(commands.Cog):
             t_start = time.monotonic()
 
             # Dispatch to process pool
-            progress_queue = self._manager.Queue()
+            progress_queue = self.render_service.progress_queue()
             cfg = self.config
             render_call = functools.partial(
                 render_replay,
@@ -486,7 +429,7 @@ class RenderCog(commands.Cog):
                 flags=flag_set,
                 theme=theme_value,
             )
-            pool, future = await self._submit_render(render_call)
+            pool, future = await self.render_service.submit(render_call)
 
             # Poll progress with timeout
             current = 0
@@ -668,7 +611,7 @@ class RenderCog(commands.Cog):
         except BrokenProcessPool:
             tracked.outcome = metrics.OUTCOME_WORKER_CRASH
             log.exception("Render worker died for %s", replay.filename)
-            await self._replace_broken_pool(pool)
+            await self.render_service.replace_broken_pool(pool)
             await interaction.edit_original_response(
                 content="Render worker crashed. Please try again.",
             )
@@ -725,9 +668,9 @@ class RenderCog(commands.Cog):
                 theme=theme_value,
             )
             try:
-                _, future = await self._submit_render(render_call)
+                _, future = await self.render_service.submit(render_call)
             except BrokenProcessPool:
-                # _submit_render already tried one rebuild; if it still fails, give up on this item
+                # RenderService.submit already tried one rebuild; if it still fails, give up on this item
                 log.warning("Could not submit batch item #%d even after pool rebuild", item.index + 1)
                 tracked.outcome = metrics.OUTCOME_WORKER_CRASH
                 metrics.finish_render(tracked)
@@ -848,7 +791,7 @@ class RenderCog(commands.Cog):
 
         preset_value = preset.value if preset else "full"
         theme_value = theme.value if theme else "default"
-        flag_set = _parse_flags(flags)
+        flag_set = parse_flags(flags)
         raw = [replay1, replay2, replay3, replay4, replay5,
                replay6, replay7, replay8, replay9, replay10]
         attachments = [a for a in raw if a is not None]
@@ -1020,7 +963,7 @@ class RenderCog(commands.Cog):
             # (Self-healing also happens on the next /render submit, but doing it eagerly
             # shrinks the window where an in-flight /render could see the dead pool.)
             if pool_died_seen:
-                await self._replace_broken_pool(self._pool)
+                await self.render_service.replace_broken_pool(self.render_service.pool)
 
             batch_elapsed = time.monotonic() - batch_start
             ok_count = sum(1 for r in results if r.ok)
@@ -1123,7 +1066,7 @@ class RenderCog(commands.Cog):
         theme: app_commands.Choice[str] | None = None,
         flags: str | None = None,
     ) -> None:
-        flag_set = _parse_flags(flags)
+        flag_set = parse_flags(flags)
         theme_value = theme.value if theme else "default"
 
         # Validate both attachments
@@ -1166,7 +1109,7 @@ class RenderCog(commands.Cog):
 
             await interaction.edit_original_response(content="Parsing + merging...")
             t_start = time.monotonic()
-            progress_queue = self._manager.Queue()
+            progress_queue = self.render_service.progress_queue()
             render_call = functools.partial(
                 render_dual_replay,
                 str(path_a),
@@ -1181,7 +1124,7 @@ class RenderCog(commands.Cog):
                 flags=flag_set,
                 theme=theme_value,
             )
-            pool, future = await self._submit_render(render_call)
+            pool, future = await self.render_service.submit(render_call)
 
             # Poll with the same cadence as /render
             last_msg = "Parsing + merging..."
@@ -1302,7 +1245,7 @@ class RenderCog(commands.Cog):
         except BrokenProcessPool:
             tracked.outcome = metrics.OUTCOME_WORKER_CRASH
             log.exception("Dual render worker died")
-            await self._replace_broken_pool(pool)
+            await self.render_service.replace_broken_pool(pool)
             await interaction.edit_original_response(
                 content="Render worker crashed (likely out of memory). Please try again.",
             )

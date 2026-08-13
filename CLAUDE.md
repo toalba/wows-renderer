@@ -49,11 +49,14 @@ wows-minimap-renderer/
 │   └── assets.py              # Asset loading (minimaps, ship icons, consumable icons, ribbons, projectiles, ships.json, map_sizes, ship_consumables)
 ├── scripts/
 │   └── decode_gameparams.py   # CLI: Decode GameParams.data → JSON / split files
-├── bot/                       # Discord bot (slash command /render)
-│   ├── main.py                # Bot entry point — creates Bot, loads cog, async cache population at boot
+├── bot/                       # Discord bot (slash command /render) + HTTP render API
+│   ├── main.py                # Bot entry point — creates Bot + RenderService, loads cog, starts API, async cache population at boot
 │   ├── config.py              # BotConfig — reads .env
 │   ├── cog_render.py          # RenderCog — /render slash command, async progress polling, file upload/download
-│   └── worker.py              # render_replay() — picklable function for ProcessPoolExecutor
+│   ├── render_service.py      # RenderService — owns the shared pool + progress-queue Manager (cog AND api)
+│   ├── api.py                 # aiohttp app — POST /v1/jobs, status, result download, bearer auth
+│   ├── jobs.py                # Job/JobRegistry — async job lifecycle, progress polling, TTL sweep
+│   └── worker.py              # render_replay()/render_dual_replay()/render_stats() — picklable pool jobs
 ├── render_quick.py            # Single-replay render (all layers, 20x speed, 1080px → output.mp4)
 ├── render_dual.py             # Dual-perspective merged render (two paired replays → single video)
 ├── profile_frames.py          # Per-frame timing profiler for render pipeline analysis
@@ -617,7 +620,13 @@ Unscheduled ideas — kept as a reference for future work.
 
 ### Architecture
 - **ProcessPoolExecutor** (not threads) — cairo rendering is CPU-bound; separate processes bypass the GIL
-- **`forkserver` start method** (`RenderCog._make_pool`) — the bot process also imports `renderer.stats_board`
+- **One pool per process, owned by `RenderService`** (`bot/render_service.py`) — created in
+  `main.setup_hook` and shared by `RenderCog` and the HTTP API. `MAX_WORKERS` is sized against the
+  host's 4 vCPU / 4.5 GB cap (this VPS has been OOM-killed before), so a second pool would
+  oversubscribe it; sharing also keeps the `wows_renders_in_flight` gauge meaningful. The cog stores
+  it as `self.render_service`, **not** `self.render` — that name would shadow the `/render` command
+  object the `app_commands` decorator puts on the class (pinned by `tests/test_cog_service_wiring.py`).
+- **`forkserver` start method** (`RenderService._make_pool`) — the bot process also imports `renderer.stats_board`
   (cairo) for the Statistics button and draws with it on an `asyncio.to_thread` worker thread. Plain `fork()`
   would only duplicate that one thread; a fork landing while it holds one of cairo's global font-cache mutexes
   leaves the mutex locked forever in the child, wedging that worker until `RENDER_TIMEOUT` with no log trace.
@@ -643,6 +652,12 @@ Unscheduled ideas — kept as a reference for future work.
 | `METRICS_ENABLED` | `true` | Serve the Prometheus `/metrics` endpoint |
 | `METRICS_PORT` | `9108` | Port for `/metrics` (container-internal only) |
 | `GRAFANA_ADMIN_PASSWORD` | `admin` | Grafana admin password (compose only) |
+| `API_TOKEN` | *(unset)* | Bearer token for the HTTP render API. Unset → the API server never starts. Rejected below 16 chars |
+| `API_PORT` | `8080` | Render API port (container-internal only) |
+| `API_MAX_PENDING` | `4` | Queued + running API jobs before `POST /v1/jobs` returns `429` |
+| `API_RESULT_TTL` | `3600` | Seconds a finished API artifact stays downloadable |
+| `CLOUDFLARE_TUNNEL_TOKEN` | *(unset)* | Token for the `cloudflared` sidecar (compose only) |
+| `COMPOSE_PROFILES` | *(unset)* | Set to `tunnel` to include the `cloudflared` sidecar in plain `docker compose up` (it sits behind a profile so tunnel-less deployments don't crash-loop on an empty token) |
 
 ### Slash Command Flow
 1. `/render` + `.wowsreplay` attachment
@@ -702,6 +717,69 @@ follow-up messages as each render completes; a final summary embed
 lists per-replay status, match type, duration, and render time.
 Failures (bad file, worker crash, oversize output) don't abort the
 batch — they're marked ❌ in the summary and other replays continue.
+
+## HTTP Render API
+
+Design doc: `docs/superpowers/specs/2026-08-13-render-api-design.md`.
+User-facing usage (curl examples, tunnel setup): README → *HTTP Render API*.
+
+Enabled by `API_TOKEN`; unset means the server never starts. Served from the
+bot's event loop (`main._start_api`), sharing the pool via `RenderService`.
+
+**Why jobs are async, not a blocking render call.** Cloudflare's edge aborts a
+proxied request that hasn't produced its first byte in ~100s (error 524) on
+non-Enterprise plans, and renders routinely exceed that (`RENDER_TIMEOUT` is
+300 on prod). So: `POST /v1/jobs` → `202 {job_id}`, `GET /v1/jobs/{id}` to
+poll, `GET /v1/jobs/{id}/result` to download. Only TTFB is capped, so
+downloading a 25 MB mp4 afterwards is fine. Do not "simplify" this into a
+synchronous endpoint.
+
+| Module | Role |
+|---|---|
+| `bot/api.py` | aiohttp app factory, bearer auth + error middleware, multipart intake, validation, `FileResponse` download |
+| `bot/jobs.py` | `Job` + `JobRegistry`: runner task, progress polling, deadline, metrics, TTL sweep. HTTP-free, so the lifecycle is unit-testable |
+| `bot/worker.py::render_stats` | Third pool job — parse + `extract_match_stats` + `render_stats_board` → PNG, drawn worker-side |
+
+Load-bearing details:
+- **`client_max_size` is not enforced on streamed `request.multipart()` reads** —
+  aiohttp applies it in `Request.read()/.post()/.json()` only. It is set as a
+  belt (`2 × MAX_UPLOAD_MB + 4`), but the real guards are the byte counts in
+  `_save_replay_part` (files, `MAX_UPLOAD_MB`) **and** `_read_text_field`
+  (options, `MAX_FIELD_BYTES`). Both are load-bearing: reverting the field cap
+  to `await part.text()` restores an unbounded buffer that OOMs this process —
+  which is also the Discord bot's process. Measured: 200 MB in one field →
+  ~200 MB growth before, 2 MB after.
+- **Uploads are stored under server-chosen names** (`UPLOAD_NAMES`), never the
+  client's. Deriving both names from client input let `replay`=`b_x.wowsreplay`
+  and `replay_b`=`x.wowsreplay` collide on one path, so a dual job merged one
+  perspective with itself and still returned `202`.
+- **`_safe_output_stem` sanitizes the artifact name** before it reaches a
+  `Content-Disposition` header. aiohttp's *client* strips CRLF and quotes; a
+  hand-rolled client does not, so the server does it.
+- **`registry.discard()` exists for the create-but-never-started window.** A job
+  left `queued` with no `finished_at` is pending for the cap and invisible to
+  the sweeper, so it would burn an `API_MAX_PENDING` slot until restart.
+- **The pending cap is checked twice.** The handler's early check saves
+  bandwidth; `JobRegistry.create` is authoritative, because reading the upload
+  awaits and two requests can otherwise both pass the early check.
+- **`Job.task` holds a strong reference** to the runner. Without it the task is
+  only referenced by the loop and can be GC'd mid-render.
+- **The progress queue is not stored on the `Job`** — the manager-side queue
+  lives as long as any proxy does, and jobs persist for `API_RESULT_TTL`.
+- **Metrics reuse `RenderTracker`** under `command` values `api_render`,
+  `api_dual`, `api_stats` (nothing validates that label; Grafana never filters
+  on it). Same ordering contract as the cog: `record_render` when the future
+  resolves, `record_delivery` after, one `finish_render`. API jobs record no
+  `upload_seconds`, like `/render_batch`.
+- **`render_stats` does not swallow extraction failures**, unlike the
+  `/render` path where stats are garnish: here the board is the product, so a
+  replay with no `0x22` results packet raises `StatsUnavailableError` and the
+  client sees that reason verbatim. Other failures return a generic message —
+  internals stay in the log.
+- **Inapplicable options are `400`, not ignored** (`preset` on a stats job,
+  `layout` on a video job).
+- Restarting the bot drops queued jobs and undownloaded results: the registry
+  is in memory, by design.
 
 ## Configurable Parameters (RenderConfig)
 
