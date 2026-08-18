@@ -24,9 +24,9 @@ from pathlib import Path
 from time import perf_counter
 
 DEFAULT_REPLAYS = [
-    "20260327_213920_PASA020-Essex_18_NE_ice_islands.wowsreplay",
-    "20260403_213640_PGSB708-Bismarck-1941_55_Seychelles.wowsreplay",
-    "20260321_194840_PFSD508-Le-Terrible_56_AngelWings.wowsreplay",
+    "test_replays/20260327_213920_PASA020-Essex_18_NE_ice_islands.wowsreplay",
+    "test_replays/20260403_213640_PGSB708-Bismarck-1941_55_Seychelles.wowsreplay",
+    "test_replays/20260321_194840_PFSD508-Le-Terrible_56_AngelWings.wowsreplay",
 ]
 
 RESULT_PREFIX = "__BENCH_RESULT__"

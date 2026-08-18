@@ -139,7 +139,10 @@ dependencies = [
 
 ```toml
 [tool.uv.sources]
-wows-replay-parser = { path = "../wows-replay-parser" }  # local dev; Docker uses SSH git source
+# Temporary git source until the parser is on PyPI. No rev pin — uv.lock
+# records the resolved main commit; `uv lock --upgrade-package
+# wows-replay-parser` moves to the latest main.
+wows-replay-parser = { git = "https://github.com/toalba/wows-replay-parser.git" }
 ```
 
 **External runtime dependencies:**
@@ -257,7 +260,7 @@ output.mp4
 
 ## Dual Perspective Rendering
 
-Entry point: `python render_dual.py a.wowsreplay b.wowsreplay output.mp4`. Both replays must come from the same match (parser's `merge_replays` validates `arenaUniqueId` and map_name). `DualMinimapRenderer` consumes the `MergedReplay` identically to a `ParsedReplay` via the `ReplaySource` protocol. Drops self-centric layers (`player_header`, `damage_stats`, `ribbons`, `achievements`, `killfeed`, `right_panel`). Neutral observer mode: no Trap-5 perspective swap — team 0 = green/left, team 1 = red/right regardless of either recorder's side. `division_mates` is empty (no recording player in merged view). Validated end-to-end on real paired replays.
+Entry point: `python render_dual.py a.wowsreplay b.wowsreplay output.mp4`. Both replays must come from the same match (parser's `merge_replays` validates `arenaUniqueId` and map_name). The parser canonically orders the pair — the team-0 recorder's replay becomes `replay_a` regardless of argument/upload order, keeping the relation-based layers (ships, health bars, consumable circles color by replay A's recorder-relative `relation`) consistent with the raw-team-id layers (caps, HUD, rosters: team 0 = green). `DualMinimapRenderer` consumes the `MergedReplay` identically to a `ParsedReplay` via the `ReplaySource` protocol. Drops self-centric layers (`player_header`, `damage_stats`, `ribbons`, `achievements`, `killfeed`, `right_panel`). Neutral observer mode: no Trap-5 perspective swap — team 0 = green/left, team 1 = red/right regardless of either recorder's side. `division_mates` is empty (no recording player in merged view). Validated end-to-end on real paired replays.
 
 ## Layer System
 

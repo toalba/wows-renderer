@@ -29,7 +29,7 @@ from renderer.layers.right_panel import RightPanelLayer
 from renderer.video import PyAVPipe, FrameWriter
 from wows_replay_parser import parse_replay
 
-REPLAY = sys.argv[1] if len(sys.argv) > 1 else "20260322_225740_PBSD598-Black-Cossack_15_NE_north.wowsreplay"
+REPLAY = sys.argv[1] if len(sys.argv) > 1 else "test_replays/20260322_225740_PBSD598-Black-Cossack_15_NE_north.wowsreplay"
 OUTPUT = sys.argv[2] if len(sys.argv) > 2 else "/tmp/profile_timed.mp4"
 GAMEDATA = Path("wows-gamedata/data")
 
