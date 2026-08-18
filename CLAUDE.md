@@ -126,7 +126,7 @@ Note: layer 4 (`weather`) and layer 6 (`trails`) are omitted in `render_quick.py
 ```toml
 [project]
 dependencies = [
-    "wows-replay-parser",        # Git dependency — the replay parser
+    "wows-replay-parser>=0.1.4", # The replay parser, from PyPI
     "pycairo>=1.26",             # Cairo vector graphics (2D rendering)
     "av>=17.0.1",                # PyAV — in-process H.264 encoder (bundles FFmpeg libs)
     "numpy>=2.0",                # BGRA buffer view for PyAV VideoFrame.from_ndarray
@@ -137,13 +137,8 @@ dependencies = [
 ]
 ```
 
-```toml
-[tool.uv.sources]
-# Temporary git source until the parser is on PyPI. No rev pin — uv.lock
-# records the resolved main commit; `uv lock --upgrade-package
-# wows-replay-parser` moves to the latest main.
-wows-replay-parser = { git = "https://github.com/toalba/wows-replay-parser.git" }
-```
+The parser has no `[tool.uv.sources]` entry — it installs from PyPI. New parser
+releases are picked up with `uv lock --upgrade-package wows-replay-parser`.
 
 **External runtime dependencies:**
 - **Cairo** system library (pycairo is a binding, needs libcairo installed on Linux/macOS; Windows wheels include it)

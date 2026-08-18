@@ -4,7 +4,7 @@ version = "0.3.0"
 requires-python = ">=3.12"
 license = { file = "LICENSE" }
 dependencies = [
-    "wows-replay-parser>=0.1.3",
+    "wows-replay-parser>=0.1.4",
     "pycairo>=1.26",
     "cairosvg>=2.9.0",
     "discord.py>=2.7.1",
@@ -35,14 +35,6 @@ packages = ["renderer", "bot"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.uv.sources]
-# Temporary git source until the parser is published to PyPI. No rev pin —
-# `uv lock` resolves main's HEAD and records the exact commit in uv.lock, so
-# builds stay reproducible and `uv lock --upgrade-package wows-replay-parser`
-# moves to the latest main. Public repo, so the Docker build fetches it over
-# https with no extra auth.
-wows-replay-parser = { git = "https://github.com/toalba/wows-replay-parser.git" }
 
 [tool.ruff]
 target-version = "py312"

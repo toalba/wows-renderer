@@ -1219,7 +1219,7 @@ requires-dist = [
     { name = "pycairo", specifier = ">=1.26" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "rich", specifier = ">=15.0.0" },
-    { name = "wows-replay-parser", git = "https://github.com/toalba/wows-replay-parser.git" },
+    { name = "wows-replay-parser", specifier = ">=0.1.4" },
 ]
 
 [package.metadata.requires-dev]
@@ -1232,12 +1232,16 @@ dev = [
 
 [[package]]
 name = "wows-replay-parser"
-version = "0.1.3"
-source = { git = "https://github.com/toalba/wows-replay-parser.git#707d82d59559b9293be2654ce320797036492726" }
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "construct" },
     { name = "lxml" },
     { name = "pycryptodome" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5c/fa/5e3dbb3389a1d7f108aded8f5f136ae5b5c484f97c5f3a79b96b090f359c/wows_replay_parser-0.1.4.tar.gz", hash = "sha256:5cf2476d6c64666077dc62141efc5bdf43630ee8d780df94eeaa6740afaa04fc", size = 259648, upload-time = "2026-08-18T11:36:09.085Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a3/84/830e6fe6b0ed5910bcb5a29853cb29bab804e0804f42c30cf9fe2a815031/wows_replay_parser-0.1.4-py3-none-any.whl", hash = "sha256:2f2bcd009a7c8eb41a6f95177f89c48dd43764fc11626323b3203afb4ea5227a", size = 151364, upload-time = "2026-08-18T11:36:07.368Z" },
 ]
 
 [[package]]
