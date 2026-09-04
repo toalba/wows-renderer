@@ -600,16 +600,21 @@ def resolve_source_tag(
     (``allow_fetch``) and retries before falling back to the closest tag.
 
     Substituting a neighbouring tag is correct for hotfix builds that ship
-    no gamedata change of their own (build 12116206 reuses v12116141). It
-    is *not* correct when the requested build is newer than every local
-    tag: that means the repo is behind upstream and the substituted data
-    describes an older wire format. Rendering anyway produces a confidently
-    wrong result — build 13015811 against v12830008 mis-maps the shifted
-    Avatar method table, so ``updateMinimapVisionInfo`` never decodes and
-    every ship reads as unspotted. Fail loudly instead.
+    no gamedata change of their own (build 12116206 reuses v12116141), and
+    that includes hotfixes past the newest tag: build 13016054 is +243 from
+    v13015811 and both are patch 15.7.
+
+    A build id alone cannot prove which case it is. Observed gaps separate
+    them by roughly 240x — hotfixes 65/243/633, patch bumps 151,804 and up —
+    but nothing in the repo records a tag's patch, so the newest tag is used
+    either way and the caller is warned. The risk this accepts: for a
+    genuinely newer *patch* the wire format differs, which mis-maps the
+    shifted Avatar method table so ``updateMinimapVisionInfo`` never decodes
+    and every ship reads as unspotted. That render is confidently wrong
+    rather than absent, and the warning is the only signal.
 
     Raises:
-        RuntimeError: No tags at all, or *build_id* is newer than all of them.
+        RuntimeError: No version tags at all.
     """
     target = int(build_id)
 
@@ -638,15 +643,21 @@ def resolve_source_tag(
         )
 
     if target > newest:
-        raise RuntimeError(
-            f"Gamedata is behind the replay: build {build_id} is newer than "
-            f"every local tag (newest is v{newest}). Refusing to render "
-            f"against older gamedata — the wire format differs, which "
-            f"silently mis-decodes ship visibility and combat methods. "
-            f"Run 'git -C {gamedata_repo} fetch --tags --prune'; if the tag "
-            f"still does not exist, the gamedata pipeline has not published "
-            f"build {build_id} yet."
+        newest_tag = next(
+            tag for build, tag in _list_tag_builds(gamedata_repo)
+            if build == newest
         )
+        log.warning(
+            "Build %s is newer than every local tag (newest is %s) — "
+            "rendering against %s. Expected for a same-patch hotfix, which "
+            "ships no gamedata change of its own. If %s is a new patch "
+            "instead, the wire format differs and ship visibility and combat "
+            "methods will mis-decode, so verify the render. "
+            "Run 'git -C %s fetch --tags --prune' to pick up the exact tag "
+            "once the gamedata pipeline publishes it.",
+            build_id, newest_tag, newest_tag, build_id, gamedata_repo,
+        )
+        return newest_tag
 
     tag = _find_closest_tag(gamedata_repo, target)
     if tag is None:  # pragma: no cover — guarded by the `newest is None` check
