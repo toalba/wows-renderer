@@ -563,15 +563,26 @@ def _newest_tag_build(gamedata_repo: Path) -> int | None:
 
 
 def _fetch_tags(gamedata_repo: Path) -> bool:
-    """Best-effort ``git fetch --tags``. False when it could not run.
+    """Best-effort ``git fetch --tags --force``. False when it could not run.
 
     Only called when an exact tag is missing, so the cost is paid on the
     rare path rather than on every cache miss. Failure is not fatal: an
     offline box with the right tag already local must keep working.
+
+    ``--force`` is load-bearing, not cosmetic. The pipeline re-creates
+    version tags (see ``_cache_is_current``), and git refuses to move an
+    existing local tag without it — "would clobber existing tag", plus a
+    non-zero exit that makes the whole fetch look failed even when new
+    tags did arrive. Without it a re-tagged version is never picked up and
+    the drift check compares the stale commit against itself forever.
+
+    ``--prune-tags`` is deliberately not passed: a deleted local tag makes
+    ``_cache_is_current`` trust that version's cache unconditionally, so
+    pruning would hide drift instead of surfacing it.
     """
     try:
         result = subprocess.run(
-            ["git", "-C", str(gamedata_repo), "fetch", "--tags", "--prune"],
+            ["git", "-C", str(gamedata_repo), "fetch", "--tags", "--force", "--prune"],
             capture_output=True,
             text=True,
             timeout=300,
