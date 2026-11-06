@@ -18,6 +18,7 @@ import pytest
 from renderer.gamedata_cache import (
     _cache_is_current,
     _discard_version_dir,
+    _fetch_tags,
     _read_sentinel,
     _tag_commit,
 )
@@ -146,3 +147,42 @@ def test_discard_version_dir_removes(tmp_path: Path):
 def test_discard_version_dir_tolerates_missing(tmp_path: Path):
     version_dir = tmp_path / "cache" / "v100"  # never created
     _discard_version_dir(version_dir, "100")  # must not raise
+
+
+def test_fetch_tags_picks_up_recreated_tag(tmp_path: Path):
+    """A moved upstream tag must actually land locally.
+
+    Detection is worthless if the corrected tag never arrives. Plain
+    ``git fetch --tags`` refuses to move an existing local tag — "would
+    clobber existing tag", and it exits non-zero so the whole fetch looks
+    failed — which left prod pinned to the pre-re-tag commit while
+    ``_cache_is_current`` compared that stale commit against itself and
+    reported the cache current forever.
+    """
+    upstream = tmp_path / "upstream"
+    upstream.mkdir()
+    _git(upstream, "init")
+    _git(upstream, "config", "user.email", "test@test")
+    _git(upstream, "config", "user.name", "test")
+    (upstream / "data.txt").write_text("first sync\n")
+    _git(upstream, "add", ".")
+    _git(upstream, "commit", "-m", "sync 100")
+    _git(upstream, "tag", "v100")
+
+    clone = tmp_path / "clone"
+    subprocess.run(
+        ["git", "clone", str(upstream), str(clone)],
+        capture_output=True, text=True, check=True,
+    )
+    stale = _tag_commit(clone, "v100")
+
+    # Pipeline re-syncs the same build onto fixed content and moves the tag
+    (upstream / "data.txt").write_text("fixed sync\n")
+    _git(upstream, "add", ".")
+    _git(upstream, "commit", "-m", "sync 100 (fixed)")
+    _git(upstream, "tag", "-f", "v100")
+    fixed = _tag_commit(upstream, "v100")
+    assert fixed != stale
+
+    assert _fetch_tags(clone) is True
+    assert _tag_commit(clone, "v100") == fixed

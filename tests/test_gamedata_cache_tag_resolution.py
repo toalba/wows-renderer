@@ -11,14 +11,19 @@ Two distinct failure modes exist around tag selection:
   15.7) silently resolved to v12830008 (15.6), which mis-maps the shifted
   Avatar method table and renders every enemy as unspotted.
 
-The distinction is directional: interpolating between two known tags is
-safe, while a build newer than every local tag means data is missing.
+Interpolating between two known tags is safe. A build past the newest tag
+is ambiguous — a same-patch hotfix (13016054 is +243 from v13015811, both
+15.7) is indistinguishable by build id from a real patch bump, and nothing
+in the repo records a tag's patch. Refusing outright blocked ordinary
+hotfix renders, so the newest tag is now substituted with a warning; see
+``test_build_newer_than_all_tags_substitutes_newest``.
 
 Uses a real throwaway git repo per test (git is a hard runtime dependency
 of the cache system anyway).
 """
 from __future__ import annotations
 
+import logging
 import subprocess
 from pathlib import Path
 
@@ -95,14 +100,24 @@ def test_older_than_all_tags_substitutes(tmp_path: Path):
     assert resolve_source_tag(repo, "100", allow_fetch=False) == "v200"
 
 
-def test_build_newer_than_all_tags_raises(tmp_path: Path):
-    """The bug: repo behind upstream must fail loudly, not downgrade."""
+def test_build_newer_than_all_tags_substitutes_newest(tmp_path: Path, caplog):
+    """A build past the newest tag renders against that newest tag.
+
+    Frontier hotfixes are the common case: 13016054 is +243 from v13015811
+    and ships no gamedata change of its own, yet refusing it blocked an
+    ordinary render. Observed gaps separate the two cases by ~240x --
+    hotfixes <=633, patch bumps >=151,804 -- but the build id alone cannot
+    prove which it is, so the newest tag is used either way.
+
+    Tradeoff: a genuinely newer *patch* now renders mis-decoded instead of
+    failing loudly. The warning asserted below is the only signal, so it
+    must stay.
+    """
     repo = _repo_with_tags(tmp_path, 100, 200)
-    with pytest.raises(RuntimeError) as exc:
-        resolve_source_tag(repo, "300", allow_fetch=False)
-    msg = str(exc.value)
-    assert "300" in msg
-    assert "fetch" in msg.lower()
+    with caplog.at_level(logging.WARNING):
+        assert resolve_source_tag(repo, "300", allow_fetch=False) == "v200"
+    assert "300" in caplog.text
+    assert "v200" in caplog.text
 
 
 def test_no_tags_at_all_raises(tmp_path: Path):
