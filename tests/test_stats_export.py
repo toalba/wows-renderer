@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import importlib
+
 import pytest
 from wows_replay_parser.battle_results import BattleResults, _decode
 
@@ -321,3 +323,60 @@ def test_resolve_ribbon_icons_tolerates_a_missing_directory(tmp_path):
     from renderer.stats_export import resolve_ribbon_icons
 
     assert resolve_ribbon_icons(tmp_path / "nope") == ()
+
+
+needs_schema_aware_parser = pytest.mark.skipif(
+    not hasattr(
+        importlib.import_module("wows_replay_parser.battle_results"),
+        "CLIENT_PUBLIC_RESULT_FIELDS_15_10",
+    ),
+    reason=(
+        "needs wows-replay-parser >= 0.1.6 for the build-aware "
+        "playersPublicInfo schema; on an older parser 15.10 stats are wrong"
+    ),
+)
+
+
+@needs_schema_aware_parser
+class TestSchemaAwareGuards:
+    """The 15.10 regression: a row that GREW passed every guard.
+
+    `BR_ROW_LEN` was compared with `<` only, so a 550-element 15.10 row
+    sailed through and the board published ribbon counts read 12 slots
+    early. The guard must key on whether the parser recognised the
+    build's schema, not on the row being long enough.
+    """
+
+    def test_ribbons_rejected_when_parser_flags_unknown_schema(self):
+        from wows_replay_parser.battle_results import PlayerBattleResult
+
+        from renderer.stats_export import player_ribbons, ribbon_columns, ribbons_readable
+
+        # Long enough to clear the old `< 538` check, but the parser could
+        # not identify the build — exactly the 15.10 failure shape.
+        unknown = PlayerBattleResult(
+            db_id=1, stats={}, extra={}, raw=[7] * 600, schema_known=False
+        )
+        assert ribbons_readable(unknown) is False
+        assert ribbon_columns(unknown) == (0, 0, 0, 0)
+        assert player_ribbons(unknown) == ()
+
+    def test_ribbons_accepted_on_a_recognised_15_10_row(self):
+        """550-element rows are a known build and must stay readable."""
+        from wows_replay_parser.battle_results import (
+            CLIENT_PUBLIC_RESULT_FIELDS_15_10,
+            _decode_player,
+        )
+
+        from renderer.stats_export import ribbon_columns, ribbons_readable
+
+        raw = [0] * 550
+        base = len(CLIENT_PUBLIC_RESULT_FIELDS_15_10) + 15  # 493
+        raw[base + 8] = 3    # citadel
+        raw[base + 15] = 25  # penetration
+        raw[base + 14] = 17  # overpen
+        raw[base + 16] = 1   # shatter
+
+        player = _decode_player(1, raw)
+        assert ribbons_readable(player) is True
+        assert ribbon_columns(player) == (3, 25, 17, 1)

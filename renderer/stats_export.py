@@ -20,10 +20,16 @@ from renderer.death_reasons import death_reason_label
 
 log = logging.getLogger(__name__)
 
-# Length of a playersPublicInfo row on the schema this module targets.
-# The four ribbon columns read raw[481 + ribbon_id]; a shorter row means
-# the schema moved and those columns must degrade to zero rather than
-# report whatever happens to sit at that offset.
+# Minimum playersPublicInfo row width this module will read ribbons from.
+#
+# Only a fallback. The authoritative signal is the parser's own
+# `PlayerBattleResult.schema_known`, which says whether it recognised the
+# build's schema at all. This constant is a `<` check, and a `<` check is
+# precisely how the 15.10 regression went unnoticed: that patch GREW the row
+# from 538 to 550 and moved the ribbon block from 481 to 493, so every row
+# cleared the guard and the board published counts read 12 slots early.
+# Retained only so an older parser without `schema_known` still rejects the
+# pre-15.3 short rows.
 BR_ROW_LEN = 538
 
 RIBBON_CITADEL = 8
@@ -107,12 +113,12 @@ def ribbon_columns(player: Any) -> tuple[int, int, int, int]:
     row tail via PlayerBattleResult.ribbon_count(), which indexes
     raw[481 + ribbon_id].
 
-    That base offset was extracted from build 12267945 (patch 15.3) and
-    the parser warns it may differ on earlier builds. Guard on the row
-    width: a short row means the schema moved, and four zeroed columns
-    beat four columns of plausible garbage.
+    The base offset is schema-derived per build (481 pre-15.10, 493 from
+    15.10), so this only has to decide whether to trust it at all —
+    see :func:`ribbons_readable`. Four zeroed columns beat four columns of
+    plausible garbage.
     """
-    if len(getattr(player, "raw", ())) < BR_ROW_LEN:
+    if not ribbons_readable(player):
         return (0, 0, 0, 0)
     return (
         player.ribbon_count(RIBBON_CITADEL),
@@ -125,13 +131,24 @@ def ribbon_columns(player: Any) -> tuple[int, int, int, int]:
 def ribbons_readable(player: Any) -> bool:
     """Whether this player's ribbon tail can be trusted.
 
-    Same 538-element check ribbon_columns uses. Pre-15.3 replays carry
-    shorter rows, and `PlayerBattleResult.ribbon_counts()` has no guard of
-    its own — it happily reads whatever integers sit at ``raw[481 + id]``
-    and returns them. On a 503-element row that yields a near-empty dict
-    with the occasional bogus entry, which renders as a plausible-looking
-    but wrong ribbon strip.
+    Defers to the parser's ``schema_known``, which is False when the row
+    width matches no build it knows. That is the only signal that catches a
+    schema moving in *either* direction: 15.10 added 12 columns and shifted
+    the ribbon block from 481 to 493, and a width check alone saw nothing
+    wrong because the row had merely got longer.
+
+    Falls back to the width check on a parser too old to expose the flag,
+    which still rejects the pre-15.3 503-element rows — there
+    ``ribbon_counts()`` returns a near-empty dict with occasional bogus
+    entries, rendering as a plausible-looking but wrong ribbon strip.
+
+    Both checks apply, deliberately. ``schema_known`` defaults to True on a
+    directly-constructed ``PlayerBattleResult``, so on its own it would
+    vouch for a row nothing ever validated; the width check alone is what
+    missed 15.10. Neither is sufficient, so require both.
     """
+    if not getattr(player, "schema_known", True):
+        return False
     return len(getattr(player, "raw", ())) >= BR_ROW_LEN
 
 
