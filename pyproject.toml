@@ -4,7 +4,7 @@ version = "0.3.0"
 requires-python = ">=3.12"
 license = { file = "LICENSE" }
 dependencies = [
-    "wows-replay-parser>=0.1.4",
+    "wows-replay-parser>=0.1.6",
     "pycairo>=1.26",
     "cairosvg>=2.9.0",
     "discord.py>=2.7.1",
