@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -1219,7 +1219,7 @@ requires-dist = [
     { name = "pycairo", specifier = ">=1.26" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "rich", specifier = ">=15.0.0" },
-    { name = "wows-replay-parser", specifier = ">=0.1.4" },
+    { name = "wows-replay-parser", specifier = ">=0.1.6" },
 ]
 
 [package.metadata.requires-dev]
@@ -1232,16 +1232,16 @@ dev = [
 
 [[package]]
 name = "wows-replay-parser"
-version = "0.1.4"
+version = "0.1.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "construct" },
     { name = "lxml" },
     { name = "pycryptodome" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5c/fa/5e3dbb3389a1d7f108aded8f5f136ae5b5c484f97c5f3a79b96b090f359c/wows_replay_parser-0.1.4.tar.gz", hash = "sha256:5cf2476d6c64666077dc62141efc5bdf43630ee8d780df94eeaa6740afaa04fc", size = 259648, upload-time = "2026-08-18T11:36:09.085Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5a/41/a5056a4fce31735addf9815d22b3c9ad217559fca56640571903594a5fca/wows_replay_parser-0.1.6.tar.gz", hash = "sha256:bd7270366bd17afd3050d5c2ac60378eb622a645acd7edd36c146bfb19b20653", size = 266997, upload-time = "2026-11-18T15:08:02.643Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/84/830e6fe6b0ed5910bcb5a29853cb29bab804e0804f42c30cf9fe2a815031/wows_replay_parser-0.1.4-py3-none-any.whl", hash = "sha256:2f2bcd009a7c8eb41a6f95177f89c48dd43764fc11626323b3203afb4ea5227a", size = 151364, upload-time = "2026-08-18T11:36:07.368Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/7a/ad8ea1e3bd09ca667b45385936295f6af79e39f4272fd62a39d43c725604/wows_replay_parser-0.1.6-py3-none-any.whl", hash = "sha256:933caea6d7183bb6b470b79fb69a5027a4a76dba2b9103b83ad15187d4fa1307", size = 154141, upload-time = "2026-11-18T15:08:01.143Z" },
 ]
 
 [[package]]

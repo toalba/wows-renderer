@@ -4,7 +4,39 @@ All notable changes to `wows-minimap-renderer` are documented here.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-11-18
+
+### Fixed
+- **Patch 15.10 statistics boards showed fabricated numbers.** 15.10 (build
+  13533378) grew the battle-results `playersPublicInfo` row from 538 to 550
+  elements, shifting `damage`, base XP and the ribbon tail by 12 slots. Every
+  15.10 board rendered zero damage and zero XP for every player, ribbon counts
+  read 12 slots early, and rows sorted by a meaningless Dmg column — silently,
+  with no warning in the log.
+
+  The offsets themselves are fixed upstream (`wows-replay-parser` 0.1.6, now a
+  minimum requirement). What belonged here is why the renderer never noticed:
+  `BR_ROW_LEN` was compared with `<` only, so a row that got *longer* cleared
+  the guard untouched. `ribbons_readable()` now requires both the parser's
+  `schema_known` flag — its statement that it recognised the build at all,
+  which catches a schema moving in either direction — and the width check.
+  Neither alone is sufficient: `schema_known` defaults True on a
+  directly-constructed `PlayerBattleResult`, so on its own it would vouch for
+  a row nothing validated. `ribbon_columns()` defers to `ribbons_readable()`
+  rather than repeating the comparison, so the two can no longer disagree.
+
+### Added
+- **`tests/test_version.py`** pins `renderer.__version__` to `pyproject.toml`.
+  It was already adrift at 0.3.0 while pyproject said 0.4.0, and nothing
+  checked — the same defect that left `wows-replay-parser.__version__` stuck
+  at "0.1.0" through five releases.
+
 ### Changed
+- **`wows-replay-parser` minimum is now 0.1.6** (was 0.1.4). Required for
+  correct 15.10 battle results. The jump also picks up 0.1.5, which was never
+  published to PyPI: per-gamedata-version nested-property caching (fixes team
+  scores frozen at the opening value for the whole match) and a `PacketDecoder`
+  leak that retained ~40 MB per parse in long-lived render workers.
 - **`/render_dual`'s cooldown is now configurable** via `DUAL_COOLDOWN_SECONDS` (default 600, unchanged). It was hard-coded to `BATCH_COOLDOWN_SECONDS`, so loosening it where the pool has headroom meant a code change. `_dual_cooldown` falls back to the 600s default when the cog can't be reached, so a lookup failure can never mean *no* cooldown on the heaviest command. Production runs 60.
 - **`_render_cog()`** replaces the duplicated `interaction.client.get_cog("RenderCog")` in both cooldown factories — `Interaction.client` is typed as `Client`, which has no `get_cog`, so the lookup now goes through one documented accessor instead of two untyped ones.
 
